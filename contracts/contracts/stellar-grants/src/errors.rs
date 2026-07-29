@@ -363,8 +363,14 @@ mod tests {
         }
         let mut count = 0;
         for &v in &seen {
-            if v { count += 1; }
+            if v {
+                count += 1;
+            }
         }
-        assert_eq!(count, pairs.len(), "Number of unique discriminants must equal number of variants");
+        assert_eq!(
+            count,
+            pairs.len(),
+            "Number of unique discriminants must equal number of variants"
+        );
     }
 }
