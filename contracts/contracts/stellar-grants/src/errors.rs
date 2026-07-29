@@ -193,8 +193,14 @@ pub enum ContractError {
 mod tests {
     use super::*;
 
-    fn enumerate_contract_errors() -> Vec<(ContractError, u32)> {
-        vec![
+    /// Maximum discriminant value used in the ContractError enum.
+    /// Update this if a higher discriminant is added.
+    const MAX_DISCRIMINANT: usize = 145;
+
+    #[test]
+    fn test_no_duplicate_discriminants() {
+        let mut seen = [false; MAX_DISCRIMINANT + 1];
+        let pairs: &[(ContractError, u32)] = &[
             (ContractError::GrantNotFound, 1),
             (ContractError::Unauthorized, 2),
             (ContractError::MilestoneAlreadyApproved, 3),
@@ -340,20 +346,25 @@ mod tests {
             (ContractError::LockupRevocationUnauthorized, 143),
             (ContractError::LockupAlreadyRevoked, 144),
             (ContractError::DaoVoteRequired, 145),
-        ]
-    }
-
-    #[test]
-    fn test_no_duplicate_discriminants() {
-        let variants = enumerate_contract_errors();
-        let mut seen = std::collections::BTreeSet::new();
-        for (_, disc) in &variants {
+        ];
+        for (_, disc) in pairs {
+            let idx = *disc as usize;
             assert!(
-                seen.insert(disc),
+                idx <= MAX_DISCRIMINANT,
+                "Discriminant {} exceeds MAX_DISCRIMINANT",
+                disc
+            );
+            assert!(
+                !seen[idx],
                 "Duplicate discriminant {} found in ContractError",
                 disc
             );
+            seen[idx] = true;
         }
-        assert_eq!(seen.len(), variants.len(), "Number of unique discriminants must equal number of variants");
+        let mut count = 0;
+        for &v in &seen {
+            if v { count += 1; }
+        }
+        assert_eq!(count, pairs.len(), "Number of unique discriminants must equal number of variants");
     }
 }
