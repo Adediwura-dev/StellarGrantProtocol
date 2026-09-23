@@ -35,6 +35,9 @@ pub fn register_hook(
     max_gas_budget: u32,
 ) -> Result<u32, ContractError> {
     admin.require_auth();
+    if Storage::get_global_admin(env) != Some(admin.clone()) {
+        return Err(ContractError::Unauthorized);
+    }
 
     let mut hooks = Storage::get_hook_registry(env, &event);
 
@@ -74,6 +77,9 @@ pub fn deactivate_hook(
     hook_index: u32,
 ) -> Result<(), ContractError> {
     admin.require_auth();
+    if Storage::get_global_admin(env) != Some(admin.clone()) {
+        return Err(ContractError::Unauthorized);
+    }
 
     let mut hooks = Storage::get_hook_registry(env, &event);
 
@@ -218,6 +224,28 @@ mod tests {
             .unwrap_err()
             .unwrap();
         assert_eq!(err, ContractError::HookLimitExceeded);
+    }
+
+    #[test]
+    fn test_hook_mutations_require_global_admin() {
+        let f = setup();
+        let attacker = Address::generate(&f.env);
+        let target = Address::generate(&f.env);
+
+        assert_eq!(
+            f.client
+                .try_register_hook(&attacker, &HookEvent::GrantCreated, &target, &1000,),
+            Err(Ok(ContractError::Unauthorized))
+        );
+
+        let index = f
+            .client
+            .register_hook(&f.admin, &HookEvent::GrantCreated, &target, &1000);
+        assert_eq!(
+            f.client
+                .try_deactivate_hook(&attacker, &HookEvent::GrantCreated, &index),
+            Err(Ok(ContractError::Unauthorized))
+        );
     }
 
     #[test]
