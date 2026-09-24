@@ -362,7 +362,6 @@ mod test {
     }
 
     #[test]
-    #[test]
     fn test_fork_grant_cap_per_grant() {
         let env = Env::default();
         let contract_id = setup(&env);
