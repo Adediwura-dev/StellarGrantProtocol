@@ -122,6 +122,12 @@ pub fn create_from_custom_template(
     if milestone_amount <= 0 {
         return Err(ContractError::InvalidInput);
     }
+    let allocated_amount = milestone_amount
+        .checked_mul(template.num_milestones as i128)
+        .ok_or(ContractError::InvalidInput)?;
+    if allocated_amount != total_amount {
+        return Err(ContractError::InvalidInput);
+    }
 
     let grant_id = crate::internal_grant_create(
         env,
@@ -245,6 +251,32 @@ mod tests {
             )
             .unwrap_err();
             assert_eq!(err, ContractError::InvalidInput);
+        });
+    }
+
+    #[test]
+    fn test_non_divisible_amount_rejected_without_stranding_dust() {
+        let env = Env::default();
+        env.mock_all_auths();
+        with_contract(&env, || {
+            let owner = Address::generate(&env);
+            let token = Address::generate(&env);
+            let mut reviewers = Vec::new(&env);
+            reviewers.push_back(Address::generate(&env));
+
+            let result = create_from_template(
+                &env,
+                &owner,
+                GrantArchetype::CommunityProject,
+                String::from_str(&env, "Community"),
+                String::from_str(&env, "Desc"),
+                &token,
+                400,
+                reviewers,
+            );
+
+            assert_eq!(result, Err(ContractError::InvalidInput));
+            assert!(Storage::get_grant(&env, 1).is_none());
         });
     }
 

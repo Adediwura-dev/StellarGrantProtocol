@@ -77,6 +77,9 @@ pub fn revoke(env: &Env, caller: &Address, subject: &Address) -> Result<(), Cont
 
     let mut attestation =
         Storage::get_verification_attestation(env, subject).ok_or(ContractError::KycRequired)?;
+    if matches!(attestation.status, VerificationStatus::Revoked) {
+        return Err(ContractError::InvalidState);
+    }
     attestation.status = VerificationStatus::Revoked;
     Storage::set_verification_attestation(env, &attestation);
 
@@ -219,6 +222,35 @@ mod tests {
             revoke(&env, &verifier, &subject).unwrap();
 
             assert!(!is_verified(&env, &subject, VerificationLevel::FullKyc));
+        });
+    }
+
+    #[test]
+    fn test_double_revoke_returns_invalid_state() {
+        let env = Env::default();
+        env.mock_all_auths();
+        with_contract(&env, || {
+            let verifier = Address::generate(&env);
+            let subject = Address::generate(&env);
+            Storage::set_verifier_contract(&env, &verifier);
+            Storage::set_verification_attestation(
+                &env,
+                &VerificationAttestation {
+                    subject: subject.clone(),
+                    verifier: verifier.clone(),
+                    level: VerificationLevel::FullKyc,
+                    status: VerificationStatus::Verified,
+                    attested_at: env.ledger().timestamp(),
+                    expires_at: None,
+                    attestation_hash: Bytes::new(&env),
+                },
+            );
+
+            revoke(&env, &verifier, &subject).unwrap();
+            assert_eq!(
+                revoke(&env, &verifier, &subject),
+                Err(ContractError::InvalidState)
+            );
         });
     }
 
