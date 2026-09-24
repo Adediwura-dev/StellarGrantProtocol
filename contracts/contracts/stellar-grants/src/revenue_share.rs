@@ -67,15 +67,16 @@ pub fn stake(
         return Err(ContractError::InvalidInput);
     }
 
-    let mut record = Storage::get_staker_epoch_record(env, staker, epoch_id)
-        .unwrap_or_else(|| StakerEpochRecord {
+    let mut record = Storage::get_staker_epoch_record(env, staker, epoch_id).unwrap_or_else(|| {
+        StakerEpochRecord {
             staker: staker.clone(),
             epoch_id,
             stake_weight: 0,
             claimable: 0,
             claimed: false,
             claimed_at: None,
-        });
+        }
+    });
     record.stake_weight = record
         .stake_weight
         .checked_add(weight)
