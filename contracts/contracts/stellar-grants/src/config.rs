@@ -1,5 +1,6 @@
 use soroban_sdk::{Address, Env};
 
+use crate::constants;
 use crate::storage::Storage;
 use crate::types::{ContractError, DecayConfig, DecayType, ProtocolConfig};
 
@@ -56,10 +57,14 @@ pub fn validate_config(config: &ProtocolConfig) -> Result<(), ContractError> {
     {
         return Err(ContractError::InvalidInput);
     }
-    if config.max_reviewers < 1 {
+    if config.max_reviewers < constants::MIN_REVIEWERS_PER_GRANT
+        || config.max_reviewers > constants::MAX_REVIEWERS_PER_GRANT
+    {
         return Err(ContractError::InvalidInput);
     }
-    if config.max_milestones_per_grant < 1 {
+    if config.max_milestones_per_grant < 1
+        || config.max_milestones_per_grant > constants::MAX_MILESTONES_PER_GRANT
+    {
         return Err(ContractError::InvalidInput);
     }
     if config.max_grant_title_len < 1 || config.max_grant_desc_len < 1 {
@@ -130,5 +135,42 @@ mod tests {
         let mut cfg = default_config();
         cfg.quorum_threshold_bps = 10_001;
         assert_eq!(validate_config(&cfg), Err(ContractError::InvalidInput));
+    }
+
+    #[test]
+    fn test_max_milestones_ceiling_rejected() {
+        let mut cfg = default_config();
+        cfg.max_milestones_per_grant = crate::constants::MAX_MILESTONES_PER_GRANT + 1;
+        assert_eq!(validate_config(&cfg), Err(ContractError::InvalidInput));
+    }
+
+    #[test]
+    fn test_max_milestones_at_ceiling_accepted() {
+        let mut cfg = default_config();
+        cfg.max_milestones_per_grant = crate::constants::MAX_MILESTONES_PER_GRANT;
+        assert!(validate_config(&cfg).is_ok());
+    }
+
+    #[test]
+    fn test_max_reviewers_ceiling_rejected() {
+        let mut cfg = default_config();
+        cfg.max_reviewers = crate::constants::MAX_REVIEWERS_PER_GRANT + 1;
+        assert_eq!(validate_config(&cfg), Err(ContractError::InvalidInput));
+    }
+
+    #[test]
+    fn test_max_reviewers_at_ceiling_accepted() {
+        let mut cfg = default_config();
+        cfg.max_reviewers = crate::constants::MAX_REVIEWERS_PER_GRANT;
+        assert!(validate_config(&cfg).is_ok());
+    }
+
+    #[test]
+    fn test_min_reviewers_floor_respected() {
+        let mut cfg = default_config();
+        cfg.max_reviewers = 0;
+        assert_eq!(validate_config(&cfg), Err(ContractError::InvalidInput));
+        cfg.max_reviewers = crate::constants::MIN_REVIEWERS_PER_GRANT;
+        assert!(validate_config(&cfg).is_ok());
     }
 }
