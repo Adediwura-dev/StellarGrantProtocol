@@ -100,11 +100,25 @@ pub fn approve(
         return Err(ContractError::Unauthorized);
     }
 
+    let has_admin_approval = is_protocol_admin
+        || clawback
+            .approvals
+            .iter()
+            .any(|a| has_role(env, &a, Role::ProtocolAdmin));
+    let has_arbiter_approval = is_dispute_arbiter
+        || clawback
+            .approvals
+            .iter()
+            .any(|a| has_role(env, &a, Role::DisputeArbiter));
+
     // Add approval
     clawback.approvals.push_back(approver.clone());
 
     // Check if we have enough approvals
-    if clawback.approvals.len() >= clawback.required_approvals {
+    if clawback.approvals.len() >= clawback.required_approvals
+        && has_admin_approval
+        && has_arbiter_approval
+    {
         clawback.status = ClawbackStatus::Approved;
     }
 
@@ -549,6 +563,52 @@ mod tests {
             let clawback = get_request(&env, 1, 0).unwrap();
             assert_eq!(clawback.status, ClawbackStatus::Approved);
             assert_eq!(clawback.approvals.len(), 2);
+        });
+    }
+
+    #[test]
+    fn test_approve_requires_both_roles() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let contract_id = register(&env);
+        let admin = Address::generate(&env);
+        let protocol_admin = Address::generate(&env);
+        let arbiter = Address::generate(&env);
+        let second_arbiter = Address::generate(&env);
+        let owner = Address::generate(&env);
+        let token = Address::generate(&env);
+        seed(
+            &env,
+            &contract_id,
+            &owner,
+            &token,
+            &admin,
+            &protocol_admin,
+            &arbiter,
+            false,
+        );
+        env.as_contract(&contract_id, || {
+            grant_role(&env, &admin, &second_arbiter, Role::DisputeArbiter, None).unwrap();
+        });
+        env.as_contract(&contract_id, || {
+            initiate(&env, &arbiter, 1, 0, String::from_str(&env, "Test")).unwrap();
+        });
+        env.as_contract(&contract_id, || {
+            approve(&env, &arbiter, 1, 0).unwrap();
+        });
+        env.as_contract(&contract_id, || {
+            approve(&env, &second_arbiter, 1, 0).unwrap();
+            assert_eq!(
+                get_request(&env, 1, 0).unwrap().status,
+                ClawbackStatus::Pending
+            );
+        });
+        env.as_contract(&contract_id, || {
+            approve(&env, &protocol_admin, 1, 0).unwrap();
+            assert_eq!(
+                get_request(&env, 1, 0).unwrap().status,
+                ClawbackStatus::Approved
+            );
         });
     }
 
