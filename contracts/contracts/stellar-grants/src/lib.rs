@@ -3301,7 +3301,7 @@ impl StellarGrantsContract {
         env: Env,
         contributors: Vec<Address>,
         rubric_id: u32,
-    ) -> Vec<ScoreResult> {
+    ) -> Result<Vec<ScoreResult>, ContractError> {
         scoring::rank_contributors(&env, contributors, rubric_id)
     }
 
