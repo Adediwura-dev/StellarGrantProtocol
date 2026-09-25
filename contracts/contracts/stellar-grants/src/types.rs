@@ -209,6 +209,8 @@ pub enum AuditAction {
     AdminChanged = 10,
     ContractPaused = 11,
     ContractUnpaused = 12,
+    SplitRegistered = 13,
+    SnapshotCaptured = 14,
 }
 
 #[contracttype]
@@ -316,6 +318,7 @@ pub struct InsurancePolicy {
     pub issued_at: u64,
     pub expires_at: u64,
     pub active: bool,
+    pub total_paid_out: i128,
 }
 
 #[contracttype]
@@ -439,6 +442,55 @@ pub struct ProtocolConfig {
     pub multisig_escrow_threshold: u32,
 }
 
+// ── Issue #681: DAO Governance ───────────────────────────────────────────────
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DaoProposal {
+    pub id: u64,
+    pub proposer: Address,
+    pub title: String,
+    pub description: String,
+    pub proposal_type: DaoProposalType,
+    pub status: DaoProposalStatus,
+    pub votes_for: u64,
+    pub votes_against: u64,
+    pub created_at: u64,
+    pub voting_deadline: u64,
+    pub executed_at: Option<u64>,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DaoProposalStatus {
+    Active,
+    Passed,
+    Rejected,
+    Executed,
+    Cancelled,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DaoProposalType {
+    UpdateConfig(ProtocolConfig),
+    ChangeAdmin(Address),
+    TreasuryWithdrawal(Address, Address, i128), // (token, to, amount)
+    Generic,
+}
+
+// ── Issue #681: Treasury Ledger (separate concept from the simple
+// Storage::get_treasury/set_treasury payout address used by slash_reviewer —
+// see PR description for the design rationale) ───────────────────────────────
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TreasurySnapshot {
+    pub token: Address,
+    pub balance: i128,
+    pub taken_at: u64,
+}
+
 // ── Issue #632: Contributor Verification ───────────────────────────────────
 
 #[contracttype]
@@ -505,6 +557,7 @@ pub struct ReviewerRewardPool {
     pub balance: i128,
     pub total_deposited: i128,
     pub total_paid_out: i128,
+    pub total_votes_recorded: i128,
 }
 
 // ── Issue #533: Bounty-Mode Grants ────────────────────────────────────────────
@@ -627,6 +680,7 @@ pub struct MultisigProposal {
     pub threshold: u32,
     pub total_weight_signed: u32,
     pub executed: bool,
+    pub expired: bool,
     pub expired_at: u64,
     pub created_by: Address,
     pub created_at: u64,
@@ -1014,13 +1068,12 @@ pub enum ProtocolModule {
     Dao = 3,
     Staking = 4,
     Vesting = 5,
-    YieldEscrow = 6,
-    MatchingPool = 7,
-    Crowdfund = 8,
-    Insurance = 9,
-    Relay = 10,
-    TokenSwap = 11,
-    Oracle = 12,
+    MatchingPool = 6,
+    Crowdfund = 7,
+    Insurance = 8,
+    Relay = 9,
+    TokenSwap = 10,
+    Oracle = 11,
 }
 
 #[contracttype]
@@ -1277,6 +1330,15 @@ pub struct GrantTemplate {
     pub insurance_opt_in: bool,
 }
 
+/// Archetype-derived safety flags enforced on a specific grant (issue #912).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GrantSafetyFlags {
+    pub requires_staking: bool,
+    pub multisig_required: bool,
+    pub insurance_opt_in: bool,
+}
+
 // ── Waitlist Module ─────────────────────────────────────────────────────────────
 
 #[contracttype]
@@ -1312,6 +1374,7 @@ pub enum RateLimitAction {
     ContributorRegister = 2,
     DisputeRaise = 3,
     BountyCreate = 4,
+    WaitlistJoin = 5,
 }
 
 #[contracttype]
@@ -2073,6 +2136,7 @@ pub struct ArbitrationCase {
     pub finalized: bool,
     pub assigned_at: u64,
     pub deadline: u64,
+    pub panel_stakes: Vec<i128>, // Snapshot of each panelist's stake at finalization time
 }
 
 // ── Issue #574: Surety Bonds for High-Value Grant Delivery ───────────────────
@@ -2291,6 +2355,7 @@ pub struct DashboardView {
     pub total_reviewers: u32,
     pub recent_grant_ids: soroban_sdk::Vec<u64>,
     pub protocol_metrics: ProtocolMetrics,
+    pub truncated: bool,
 }
 
 #[contracttype]
@@ -2302,6 +2367,7 @@ pub struct ReviewerView {
     pub pending_votes: soroban_sdk::Vec<(u64, u32)>,
     pub sla_breach_count: u32,
     pub pending_rewards: i128,
+    pub truncated: bool,
 }
 
 // ── Issue #613: Conditional Release ───────────────────────────────────────

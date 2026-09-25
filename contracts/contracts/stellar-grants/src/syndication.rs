@@ -67,6 +67,11 @@ pub fn join_syndicate(
         return Err(ContractError::ZeroAmount);
     }
 
+    let grant = Storage::get_grant(env, grant_id).ok_or(ContractError::GrantNotFound)?;
+    if grant.status != crate::types::GrantStatus::Active {
+        return Err(ContractError::InvalidState);
+    }
+
     let mut syndicate =
         Storage::get_syndicate_grant(env, grant_id).ok_or(ContractError::GrantNotFound)?;
     if syndicate.status != SyndicateStatus::Forming {
@@ -81,6 +86,13 @@ pub fn join_syndicate(
     if Storage::get_syndicate_member(env, grant_id, member).is_none()
         && syndicate.member_count >= syndicate.max_members
     {
+        return Err(ContractError::InvalidInput);
+    }
+
+    // Check total commitments don't exceed target_total
+    let total_committed = total_deposited(env, grant_id);
+    let remaining = syndicate.target_total.saturating_sub(total_committed);
+    if amount > remaining {
         return Err(ContractError::InvalidInput);
     }
 
@@ -160,6 +172,7 @@ pub fn close_syndicate(env: &Env, lead: &Address, grant_id: u64) -> Result<(), C
 /// Distribute a milestone payout proportionally across syndicate members' views.
 pub fn record_payout_allocation(
     env: &Env,
+    caller: &Address,
     grant_id: u64,
     milestone_idx: u32,
     payout: i128,
@@ -169,6 +182,9 @@ pub fn record_payout_allocation(
     }
     let syndicate =
         Storage::get_syndicate_grant(env, grant_id).ok_or(ContractError::GrantNotFound)?;
+    if syndicate.lead != *caller {
+        return Err(ContractError::Unauthorized);
+    }
     if syndicate.status != SyndicateStatus::Active {
         return Err(ContractError::InvalidState);
     }
@@ -183,6 +199,11 @@ pub fn record_payout_allocation(
     }
     Storage::set_syndicate_payouts(env, grant_id, milestone_idx, &allocations);
     Ok(())
+}
+
+/// Get the recorded payout allocation for a milestone.
+pub fn get_payout_allocation(env: &Env, grant_id: u64, milestone_idx: u32) -> Vec<(Address, i128)> {
+    Storage::get_syndicate_payouts(env, grant_id, milestone_idx)
 }
 
 /// Allow members to withdraw after an unclosed formation expires.
@@ -216,6 +237,11 @@ pub fn withdraw_syndicate(
     Storage::set_syndicate_member_index(env, grant_id, &index);
     syndicate.member_count = syndicate.member_count.saturating_sub(1);
     Storage::set_syndicate_grant(env, grant_id, &syndicate);
+
+    env.events().publish(
+        (Symbol::new(env, "member_withdrew"), grant_id),
+        (member.clone(), amount),
+    );
 
     Ok(amount.min(record.deposited_amount))
 }
@@ -440,8 +466,8 @@ mod tests {
         let f = setup();
         form(&f);
 
-        // 60/40 of a 1000 target → 6000 / 4000 bps
-        join(&f, &f.member_a, 600);
+        // 500/400 of a 1000 target -> 5000 / 4000 bps
+        join(&f, &f.member_a, 500);
         join(&f, &f.member_b, 400);
 
         f.env.as_contract(&f.contract_id, || {
@@ -449,9 +475,9 @@ mod tests {
             assert_eq!(members.len(), 2);
 
             let a = get_member(&f.env, GRANT_ID, &f.member_a).unwrap();
-            assert_eq!(a.deposited_amount, 600);
-            assert_eq!(a.committed_amount, 600);
-            assert_eq!(a.share_bps, 6_000);
+            assert_eq!(a.deposited_amount, 500);
+            assert_eq!(a.committed_amount, 500);
+            assert_eq!(a.share_bps, 5_000);
             assert!(!a.is_lead);
 
             let b = get_member(&f.env, GRANT_ID, &f.member_b).unwrap();
@@ -466,8 +492,8 @@ mod tests {
 
         f.env.as_contract(&f.contract_id, || {
             let a2 = get_member(&f.env, GRANT_ID, &f.member_a).unwrap();
-            assert_eq!(a2.deposited_amount, 700);
-            assert_eq!(a2.share_bps, 7_000);
+            assert_eq!(a2.deposited_amount, 600);
+            assert_eq!(a2.share_bps, 6_000);
             assert_eq!(get_syndicate(&f.env, GRANT_ID).unwrap().member_count, 2);
         });
     }
@@ -547,11 +573,12 @@ mod tests {
         f.client.close_syndicate(&f.lead, &GRANT_ID);
 
         let payout = 1_000i128;
-        f.client.record_payout_allocation(&GRANT_ID, &0, &payout);
+        f.client
+            .record_payout_allocation(&f.lead, &GRANT_ID, &0, &payout);
 
         assert_eq!(
             f.client
-                .try_record_payout_allocation(&GRANT_ID, &0, &0)
+                .try_record_payout_allocation(&f.lead, &GRANT_ID, &0, &0)
                 .unwrap_err()
                 .unwrap(),
             ContractError::ZeroAmount
@@ -584,7 +611,8 @@ mod tests {
         f.client.close_syndicate(&f.lead, &GRANT_ID);
 
         // saturating_mul(i128::MAX, 10000) must not panic through checked_div.
-        f.client.record_payout_allocation(&GRANT_ID, &1, &i128::MAX);
+        f.client
+            .record_payout_allocation(&f.lead, &GRANT_ID, &1, &i128::MAX);
 
         let allocations = read_payouts(&f, 1);
         assert_eq!(allocations.len(), 1);
@@ -600,10 +628,28 @@ mod tests {
 
         assert_eq!(
             f.client
-                .try_record_payout_allocation(&GRANT_ID, &0, &100)
+                .try_record_payout_allocation(&f.lead, &GRANT_ID, &0, &100)
                 .unwrap_err()
                 .unwrap(),
             ContractError::InvalidState
+        );
+    }
+
+    #[test]
+    fn test_record_payout_allocation_rejects_stranger() {
+        let f = setup();
+        form(&f);
+        join(&f, &f.member_a, 600);
+        join(&f, &f.member_b, 400);
+        f.client.close_syndicate(&f.lead, &GRANT_ID);
+
+        let stranger = Address::generate(&f.env);
+        assert_eq!(
+            f.client
+                .try_record_payout_allocation(&stranger, &GRANT_ID, &0, &1_000)
+                .unwrap_err()
+                .unwrap(),
+            ContractError::Unauthorized
         );
     }
 
@@ -695,6 +741,27 @@ mod tests {
         assert_eq!(
             f.client
                 .try_withdraw_syndicate(&f.member_a, &GRANT_ID)
+                .unwrap_err()
+                .unwrap(),
+            ContractError::InvalidState
+        );
+    }
+
+    #[test]
+    fn test_join_syndicate_requires_active_grant() {
+        let f = setup();
+        f.env.as_contract(&f.contract_id, || {
+            let mut grant =
+                Storage::get_grant(&f.env, GRANT_ID).ok_or(ContractError::GrantNotFound).unwrap();
+            grant.status = crate::types::GrantStatus::Cancelled;
+            Storage::set_grant(&f.env, GRANT_ID, &grant);
+        });
+
+        form(&f);
+
+        assert_eq!(
+            f.client
+                .try_join_syndicate(&f.member_a, &GRANT_ID, &MIN_COMMIT)
                 .unwrap_err()
                 .unwrap(),
             ContractError::InvalidState

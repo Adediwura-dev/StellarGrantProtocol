@@ -37,7 +37,6 @@ pub fn pause(env: &Env, admin: &Address, reason: String) -> Result<(), ContractE
         ProtocolModule::Dao,
         ProtocolModule::Staking,
         ProtocolModule::Vesting,
-        ProtocolModule::YieldEscrow,
         ProtocolModule::MatchingPool,
         ProtocolModule::Crowdfund,
         ProtocolModule::Insurance,
@@ -46,7 +45,7 @@ pub fn pause(env: &Env, admin: &Address, reason: String) -> Result<(), ContractE
         ProtocolModule::Oracle,
     ];
     for m in all_modules.iter() {
-        let _ = circuit_breaker::trip(env, admin, m.clone(), reason.clone(), None);
+        let _ = circuit_breaker::trip_internal(env, admin, m.clone(), reason.clone(), None);
     }
 
     let record = PauseRecord {

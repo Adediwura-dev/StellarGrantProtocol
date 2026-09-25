@@ -1,7 +1,7 @@
 use soroban_sdk::{Address, Env, String};
 
 use crate::errors::ContractError;
-use crate::events::{ComplianceAttested, ComplianceRevoked};
+use crate::events::{ComplianceAttested, ComplianceRevoked, VerifierChanged};
 use crate::storage::Storage;
 use crate::types::{ComplianceAttestation, ComplianceLevel, ComplianceStatus};
 
@@ -9,10 +9,17 @@ use crate::types::{ComplianceAttestation, ComplianceLevel, ComplianceStatus};
 
 /// Register a trusted compliance verifier address. Admin only.
 pub fn set_verifier(env: &Env, admin: &Address, verifier: &Address) -> Result<(), ContractError> {
+    admin.require_auth();
     if Storage::get_global_admin(env) != Some(admin.clone()) {
         return Err(ContractError::Unauthorized);
     }
+    let old_verifier = Storage::get_compliance_verifier(env);
     Storage::set_compliance_verifier(env, verifier);
+    VerifierChanged {
+        old_verifier,
+        new_verifier: verifier.clone(),
+    }
+    .publish(env);
     Ok(())
 }
 
@@ -27,6 +34,7 @@ pub fn attest(
     expires_at: u64,
     jurisdiction: String,
 ) -> Result<(), ContractError> {
+    verifier.require_auth();
     let registered_verifier =
         Storage::get_compliance_verifier(env).ok_or(ContractError::VerifierNotSet)?;
     if *verifier != registered_verifier {
@@ -61,10 +69,15 @@ pub fn attest(
 
 /// Revoke a compliance attestation. Verifier or admin only.
 pub fn revoke(env: &Env, revoker: &Address, subject: &Address) -> Result<(), ContractError> {
+    revoker.require_auth();
     let is_admin = Storage::get_global_admin(env) == Some(revoker.clone());
     let is_verifier = Storage::get_compliance_verifier(env) == Some(revoker.clone());
     if !is_admin && !is_verifier {
         return Err(ContractError::Unauthorized);
+    }
+
+    if Storage::get_compliance_attestation(env, subject).is_none() {
+        return Err(ContractError::InvalidState);
     }
 
     Storage::remove_compliance_attestation(env, subject);
@@ -144,7 +157,20 @@ pub fn is_valid(env: &Env, attestation: &ComplianceAttestation) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Address, Env};
+    use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env};
+
+    fn set_ledger(env: &Env, sequence: u32, timestamp: u64) {
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            timestamp,
+            protocol_version: 25,
+            sequence_number: sequence,
+            base_reserve: 10,
+            network_id: Default::default(),
+            min_temp_entry_ttl: 100_000,
+            min_persistent_entry_ttl: 100_000,
+            max_entry_ttl: 1_000_000,
+        });
+    }
 
     fn setup() -> (Env, Address, Address) {
         let env = Env::default();
@@ -382,7 +408,7 @@ mod tests {
     #[test]
     fn attest_records_timestamps() {
         let (env, _, verifier) = setup();
-        env.ledger().set(1, 100);
+        set_ledger(&env, 1, 100);
         let subj = Address::generate(&env);
         let jurisdiction = soroban_sdk::String::from_str(&env, "US");
         attest(
@@ -568,7 +594,7 @@ mod tests {
         )
         .unwrap();
         // Advance past expiry
-        env.ledger().set(1, 101);
+        set_ledger(&env, 1, 101);
         assert_eq!(
             require_compliant(&env, &subj, ComplianceLevel::Basic),
             Err(ContractError::ComplianceCheckFailed)
@@ -590,7 +616,7 @@ mod tests {
             jurisdiction,
         )
         .unwrap();
-        env.ledger().set(1, 199);
+        set_ledger(&env, 1, 199);
         require_compliant(&env, &subj, ComplianceLevel::Basic).unwrap();
     }
 
@@ -631,7 +657,7 @@ mod tests {
         )
         .unwrap();
         // Even far in the future, zero expiry means never expires
-        env.ledger().set(1, 999_999);
+        set_ledger(&env, 1, 999_999);
         require_compliant(&env, &subj, ComplianceLevel::Standard).unwrap();
     }
 
@@ -707,12 +733,54 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_revoke_never_attested_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(crate::StellarGrantsContract, ());
+        let admin = Address::generate(&env);
+        let verifier = Address::generate(&env);
+        let subj = Address::generate(&env);
+
+        env.as_contract(&contract_id, || {
+            Storage::set_global_admin(&env, &admin);
+            Storage::set_compliance_verifier(&env, &verifier);
+
+            assert_eq!(
+                revoke(&env, &verifier, &subj),
+                Err(ContractError::InvalidState)
+            );
+            assert_eq!(
+                revoke(&env, &admin, &subj),
+                Err(ContractError::InvalidState)
+            );
+        });
+    }
+
+    #[test]
+    fn test_set_verifier_emits_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(crate::StellarGrantsContract, ());
+        let admin = Address::generate(&env);
+        let verifier = Address::generate(&env);
+        let new_verifier = Address::generate(&env);
+
+        env.as_contract(&contract_id, || {
+            Storage::set_global_admin(&env, &admin);
+            Storage::set_compliance_verifier(&env, &verifier);
+
+            set_verifier(&env, &admin, &new_verifier).unwrap();
+            assert_eq!(Storage::get_compliance_verifier(&env), Some(new_verifier));
+        });
+    }
+
     // ── is_valid ──────────────────────────────────────────────────────────
 
     #[test]
     fn is_valid_approved_not_expired() {
         let env = Env::default();
-        env.ledger().set(1, 50);
+        set_ledger(&env, 1, 50);
         let att = ComplianceAttestation {
             subject: Address::generate(&env),
             status: ComplianceStatus::Approved,
@@ -758,7 +826,7 @@ mod tests {
     #[test]
     fn is_valid_past_expiry_time() {
         let env = Env::default();
-        env.ledger().set(1, 200);
+        set_ledger(&env, 1, 200);
         let att = ComplianceAttestation {
             subject: Address::generate(&env),
             status: ComplianceStatus::Approved,
@@ -774,7 +842,7 @@ mod tests {
     #[test]
     fn is_valid_zero_expiry_never_expires() {
         let env = Env::default();
-        env.ledger().set(1, 999_999);
+        set_ledger(&env, 1, 999_999);
         let att = ComplianceAttestation {
             subject: Address::generate(&env),
             status: ComplianceStatus::Approved,

@@ -226,6 +226,7 @@ pub fn claim_rewards(
     referrer: &Address,
     token: &Address,
 ) -> Result<i128, ContractError> {
+    crate::reentrancy::protect(env)?;
     referrer.require_auth();
 
     let pending = Storage::get_referral_rewards(env, referrer, token);
@@ -235,7 +236,14 @@ pub fn claim_rewards(
 
     Storage::set_referral_rewards(env, referrer, token, 0);
 
-    token::Client::new(env, token).transfer(&env.current_contract_address(), referrer, &pending);
+    crate::reentrancy::protect_external_call(env, || {
+        token::Client::new(env, token).transfer(
+            &env.current_contract_address(),
+            referrer,
+            &pending,
+        );
+        Ok(())
+    })?;
 
     ReferralRewardsClaimed {
         referrer: referrer.clone(),
@@ -291,7 +299,7 @@ mod tests {
     use super::*;
     use crate::types::AcceptanceCriteria;
     use crate::{StellarGrantsContract, StellarGrantsContractClient};
-    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::testutils::{Address as _, Ledger as _};
     use soroban_sdk::{vec, String, Vec};
 
     struct Fixture<'a> {
@@ -335,15 +343,19 @@ mod tests {
         }
     }
 
-    /// Register the referrer (a code requires a registered participant) and
-    /// have `owner` join under their code.
-    fn apply_referral(f: &Fixture) {
+    fn register_referrer(f: &Fixture) {
         f.client.reviewer_register(
             &f.referrer,
             &String::from_str(&f.env, "Referrer"),
             &Vec::new(&f.env),
             &None,
         );
+    }
+
+    /// Register the referrer (a code requires a registered participant) and
+    /// have `owner` join under their code.
+    fn apply_referral(f: &Fixture) {
+        register_referrer(f);
         let code = f.client.referral_create_code(&f.referrer, &None, &None);
         f.client.referral_apply_code(&f.owner, &code);
     }
@@ -394,6 +406,61 @@ mod tests {
             .milestone_vote(&grant_id, &0, &f.reviewer, &true, &None);
         f.client.grant_complete(&grant_id);
         grant_id
+    }
+
+    #[test]
+    fn test_code_creation_expiry_and_max_uses() {
+        let f = setup();
+        register_referrer(&f);
+
+        let expires_at = f.env.ledger().timestamp() + 10;
+        let expiring = f
+            .client
+            .referral_create_code(&f.referrer, &Some(expires_at), &None);
+        let stored = f.env.as_contract(&f.client.address, || {
+            Storage::get_referral_code(&f.env, &expiring).unwrap()
+        });
+        assert_eq!(stored.expires_at, Some(expires_at));
+        assert!(stored.is_active);
+
+        f.env.ledger().set_timestamp(expires_at + 1);
+        assert_eq!(
+            f.client
+                .try_referral_apply_code(&f.owner, &expiring)
+                .unwrap_err(),
+            Ok(ContractError::ReferralCodeExpired)
+        );
+
+        let limited = f.client.referral_create_code(&f.referrer, &None, &Some(1));
+        f.client.referral_apply_code(&f.owner, &limited);
+        let another = Address::generate(&f.env);
+        assert_eq!(
+            f.client
+                .try_referral_apply_code(&another, &limited)
+                .unwrap_err(),
+            Ok(ContractError::ReferralCodeExhausted)
+        );
+    }
+
+    #[test]
+    fn test_self_referral_and_double_apply_are_rejected() {
+        let f = setup();
+        register_referrer(&f);
+        let code = f.client.referral_create_code(&f.referrer, &None, &None);
+
+        assert_eq!(
+            f.client
+                .try_referral_apply_code(&f.referrer, &code)
+                .unwrap_err(),
+            Ok(ContractError::InvalidInput)
+        );
+        f.client.referral_apply_code(&f.owner, &code);
+        assert_eq!(
+            f.client
+                .try_referral_apply_code(&f.owner, &code)
+                .unwrap_err(),
+            Ok(ContractError::AlreadyReferred)
+        );
     }
 
     #[test]
@@ -462,5 +529,20 @@ mod tests {
 
         assert_eq!(f.client.referral_pending_rewards(&f.referrer, &f.token), 0);
         assert!(f.client.referral_get_record(&f.owner).is_none());
+    }
+
+    #[test]
+    fn test_claim_rewards_rejects_reentrant_call_when_guard_is_held() {
+        let f = setup();
+
+        f.env.as_contract(&f.client.address, || {
+            f.env
+                .storage()
+                .temporary()
+                .set(&crate::reentrancy::ReentrancyKey::ExternalCallGuard, &());
+
+            let err = claim_rewards(&f.env, &f.referrer, &f.token).unwrap_err();
+            assert_eq!(err, ContractError::Reentrancy);
+        });
     }
 }
