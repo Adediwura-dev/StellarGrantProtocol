@@ -2043,6 +2043,21 @@ impl Storage {
         Self::bump(env, &key);
     }
 
+    pub fn get_arbiter_pending_settlements(env: &Env, arbiter: &Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Arbitration(ArbitrationKey::PendingSettlements(
+                arbiter.clone(),
+            )))
+            .unwrap_or(0)
+    }
+
+    pub fn set_arbiter_pending_settlements(env: &Env, arbiter: &Address, count: u32) {
+        let key = DataKey::Arbitration(ArbitrationKey::PendingSettlements(arbiter.clone()));
+        env.storage().persistent().set(&key, &count);
+        Self::bump(env, &key);
+    }
+
     pub fn next_arbitration_case_id(env: &Env) -> u32 {
         let mut id: u32 = env
             .storage()
