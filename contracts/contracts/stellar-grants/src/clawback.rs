@@ -254,16 +254,19 @@ pub fn execute(
     if allowance < clawback.amount {
         return Err(ContractError::InsufficientClawbackAllowance);
     }
-    token_client.transfer_from(
-        &env.current_contract_address(),
-        &clawback.target,
-        &treasury,
-        &clawback.amount,
-    );
 
-    // Update status
     clawback.status = ClawbackStatus::Executed;
     Storage::set_clawback(env, grant_id, milestone_idx, &clawback);
+
+    crate::reentrancy::protect_external_call(env, || {
+        token_client.transfer_from(
+            &env.current_contract_address(),
+            &clawback.target,
+            &treasury,
+            &clawback.amount,
+        );
+        Ok(())
+    })?;
 
     Events::emit_clawback_executed(
         env,
