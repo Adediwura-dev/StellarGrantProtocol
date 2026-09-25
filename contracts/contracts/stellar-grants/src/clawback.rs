@@ -4,7 +4,9 @@ use crate::access_control::{has_role, require_role};
 use crate::constants::CLAWBACK_DISPUTE_WINDOW_SECONDS;
 use crate::events::Events;
 use crate::storage::Storage;
-use crate::types::{ClawbackRequest, ClawbackStatus, ContractError, MilestoneState, Role};
+use crate::types::{
+    ClawbackRequest, ClawbackStatus, ContractError, Dispute, DisputeStatus, MilestoneState, Role,
+};
 
 /// Initiate a clawback. Requires DisputeArbiter role.
 pub fn initiate(
@@ -157,16 +159,34 @@ pub fn dispute(
         return Err(ContractError::DeadlinePassed);
     }
 
+    if Storage::get_dispute(env, grant_id, milestone_idx).is_some() {
+        return Err(ContractError::InvalidState);
+    }
+
     // Update status to disputed
     clawback.status = ClawbackStatus::DisputedByContributor;
     Storage::set_clawback(env, grant_id, milestone_idx, &clawback);
 
     Events::emit_clawback_disputed(env, grant_id, milestone_idx, contributor.clone());
 
-    // Raise a formal dispute for arbitration
+    // Record this post-completion dispute directly. `raise_dispute` is for
+    // active grants and also locks their escrow, which is not valid here.
     let grant = Storage::get_grant(env, grant_id).ok_or(ContractError::GrantNotFound)?;
     let dispute_reason = String::from_str(env, "Clawback disputed by contributor");
-    crate::dispute::raise_dispute(env, &grant, milestone_idx, contributor, dispute_reason)?;
+    let record = Dispute {
+        grant_id,
+        milestone_idx,
+        raised_by: contributor.clone(),
+        reason: dispute_reason,
+        status: DisputeStatus::Open,
+        arbiters: Vec::new(env),
+        votes_contributor: 0,
+        votes_funder: 0,
+        raised_at: now,
+        resolved_at: None,
+    };
+    Storage::set_dispute(env, grant_id, milestone_idx, &record);
+    Events::emit_dispute_raised(env, grant_id, milestone_idx, contributor.clone());
 
     Ok(())
 }
@@ -651,11 +671,16 @@ mod tests {
 
         // Contributor disputes
         env.as_contract(&contract_id, || {
+            let mut grant = Storage::get_grant(&env, 1).unwrap();
+            grant.status = crate::types::GrantStatus::Completed;
+            Storage::set_grant(&env, 1, &grant);
             let result = dispute(&env, &owner, 1, 0);
             assert!(result.is_ok());
 
             let clawback = get_request(&env, 1, 0).unwrap();
             assert_eq!(clawback.status, ClawbackStatus::DisputedByContributor);
+            let dispute_record = Storage::get_dispute(&env, 1, 0).unwrap();
+            assert_eq!(dispute_record.status, DisputeStatus::Open);
         });
     }
 
