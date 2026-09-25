@@ -1,5 +1,6 @@
 use soroban_sdk::{Address, Env, String, Symbol, Vec};
 
+use crate::constants;
 use crate::errors::ContractError;
 use crate::storage::Storage;
 use crate::types::{GrantStatus, TimerRecord, TimerTriggerType};
@@ -25,6 +26,10 @@ pub fn register_timer(
     }
 
     let mut timers = Storage::get_grant_timers(env, grant_id);
+
+    if timers.len() >= constants::MAX_TIMERS_PER_GRANT {
+        return Err(ContractError::InvalidInput);
+    }
 
     for existing in timers.iter() {
         if existing.trigger_type == trigger_type && !existing.fired {
@@ -594,6 +599,43 @@ mod tests {
                 pending.get(0).unwrap().trigger_type,
                 TimerTriggerType::CustomCallback
             );
+        });
+    }
+
+    #[test]
+    fn test_max_timers_per_grant_enforced() {
+        with_setup(|env, _admin, owner| {
+            // Fill up to MAX_TIMERS_PER_GRANT by repeatedly registering + firing
+            // CustomCallback (fires unconditionally at or past fires_at timestamp).
+            for i in 0..crate::constants::MAX_TIMERS_PER_GRANT {
+                register_timer(env, owner, 1, TimerTriggerType::CustomCallback, 1_000)
+                    .unwrap_or_else(|e| panic!("registration {i} failed: {e:?}"));
+                trigger_timers(env, owner, 1);
+            }
+            assert_eq!(
+                get_timers(env, 1).len(),
+                crate::constants::MAX_TIMERS_PER_GRANT
+            );
+            // The next registration must be rejected.
+            let result = register_timer(env, owner, 1, TimerTriggerType::CustomCallback, 1_000);
+            assert_eq!(result, Err(ContractError::InvalidInput));
+            // The list must not have grown.
+            assert_eq!(
+                get_timers(env, 1).len(),
+                crate::constants::MAX_TIMERS_PER_GRANT
+            );
+        });
+    }
+
+    #[test]
+    fn test_timer_list_bounded_across_fire_cycles() {
+        with_setup(|env, _admin, owner| {
+            // Simulate many fire/re-register cycles; the list must never exceed the cap.
+            for _ in 0..20 {
+                let _ = register_timer(env, owner, 1, TimerTriggerType::CustomCallback, 1_000);
+                trigger_timers(env, owner, 1);
+                assert!(get_timers(env, 1).len() <= crate::constants::MAX_TIMERS_PER_GRANT);
+            }
         });
     }
 }
