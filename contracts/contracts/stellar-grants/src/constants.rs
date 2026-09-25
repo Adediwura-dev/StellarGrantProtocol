@@ -68,11 +68,11 @@ pub const MAX_ROLLING_WINDOW_SIZE: u32 = 50;
 pub const MAX_PARAM_HISTORY: u32 = 20;
 pub const MAX_RUBRIC_WEIGHTS: u32 = 6;
 pub const MAX_CONDITIONS_PER_MILESTONE: u32 = 5;
-pub const MAX_MULTI_TOKEN_TYPES: u32 = 5;
-pub const MAX_GROUP_MEMBERS: u32 = 10;
+// MAX_MULTI_TOKEN_TYPES, MAX_GROUP_MEMBERS, and MAX_AUCTION_BIDS removed —
+// these constants described planned features (multi-token grants, grant groups,
+// bid auctions) that were never implemented. Re-add when the feature code lands.
 pub const MAX_WAITLIST_SIZE: u32 = 100;
 pub const MAX_TIMERS_PER_GRANT: u32 = 10;
-pub const MAX_AUCTION_BIDS: u32 = 50;
 pub const MAX_BATCH_DETAIL_SIZE: u32 = 10;
 
 // ── Scoring ──────────────────────────────────────────────────────────────────
