@@ -197,3 +197,191 @@ pub enum ContractError {
     // RBAC bootstrap (#1077)
     AlreadyInitialized = 151,
 }
+
+// ─── Discriminant uniqueness tests ────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Maximum discriminant value used in the ContractError enum.
+    /// Update this if a higher discriminant is added.
+    const MAX_DISCRIMINANT: usize = 145;
+
+    #[test]
+    fn test_no_duplicate_discriminants() {
+        let mut seen = [false; MAX_DISCRIMINANT + 1];
+        let pairs: &[(ContractError, u32)] = &[
+            (ContractError::GrantNotFound, 1),
+            (ContractError::Unauthorized, 2),
+            (ContractError::MilestoneAlreadyApproved, 3),
+            (ContractError::QuorumNotReached, 4),
+            (ContractError::DeadlinePassed, 5),
+            (ContractError::InvalidInput, 6),
+            (ContractError::MilestoneNotSubmitted, 7),
+            (ContractError::AlreadyVoted, 8),
+            (ContractError::MilestoneNotFound, 9),
+            (ContractError::InvalidState, 10),
+            (ContractError::NoRefundableAmount, 11),
+            (ContractError::GrantAlreadyReleased, 12),
+            (ContractError::NotMultisigSigner, 13),
+            (ContractError::AlreadySignedRelease, 14),
+            (ContractError::NotAllMilestonesApproved, 15),
+            (ContractError::InsufficientStake, 16),
+            (ContractError::StakeNotFound, 17),
+            (ContractError::AlreadyRegistered, 18),
+            (ContractError::BatchEmpty, 19),
+            (ContractError::BatchTooLarge, 20),
+            (ContractError::MilestoneAlreadySubmitted, 21),
+            (ContractError::ZeroAmount, 22),
+            (ContractError::ReviewerLimitExceeded, 23),
+            (ContractError::MilestoneIndexOutOfBounds, 24),
+            (ContractError::Reentrancy, 25),
+            (ContractError::ContractPaused, 26),
+            (ContractError::StreamNotFound, 27),
+            (ContractError::StreamNotActive, 28),
+            (ContractError::StreamAlreadyExists, 29),
+            (ContractError::StreamExhausted, 30),
+            (ContractError::InsufficientVoiceCredits, 31),
+            (ContractError::VoterNotAllocated, 32),
+            (ContractError::PolicyNotFound, 33),
+            (ContractError::PolicyExpired, 34),
+            (ContractError::PolicyInactive, 35),
+            (ContractError::ClaimNotFound, 36),
+            (ContractError::ClaimAlreadyResolved, 37),
+            (ContractError::InsufficientPoolBalance, 38),
+            (ContractError::HookNotFound, 39),
+            (ContractError::HookLimitExceeded, 40),
+            (ContractError::HookAlreadyInactive, 41),
+            (ContractError::EscrowLocked, 42),
+            (ContractError::EscrowAlreadyOpen, 43),
+            (ContractError::EscrowNotFound, 44),
+            (ContractError::ProposalNotFound, 45),
+            (ContractError::ProposalExpired, 46),
+            (ContractError::ProposalAlreadyExecuted, 47),
+            (ContractError::ThresholdNotMet, 48),
+            (ContractError::NotAProposalSigner, 49),
+            (ContractError::ComplianceNotVerified, 50),
+            (ContractError::ComplianceCheckFailed, 51),
+            (ContractError::VerifierNotSet, 52),
+            (ContractError::NotVerifier, 53),
+            (ContractError::InsufficientTreasuryBalance, 54),
+            (ContractError::TreasuryNotConfigured, 55),
+            (ContractError::DaoProposalNotFound, 56),
+            (ContractError::DaoProposalNotActive, 57),
+            (ContractError::DaoProposalVotingClosed, 58),
+            (ContractError::DaoProposalAlreadyExecuted, 59),
+            (ContractError::DaoProposalQuorumNotReached, 60),
+            (ContractError::DaoProposalRejected, 61),
+            (ContractError::DaoModeDisabled, 62),
+            (ContractError::BountyNotFound, 63),
+            (ContractError::BountyNotOpen, 64),
+            (ContractError::SubmissionWindowClosed, 65),
+            (ContractError::SubmissionNotFound, 66),
+            (ContractError::BountyAlreadyResolved, 67),
+            (ContractError::NoSubmissions, 68),
+            (ContractError::DexNotConfigured, 69),
+            (ContractError::SwapExceedsSlippage, 70),
+            (ContractError::SwapFailed, 71),
+            (ContractError::InvalidSwapRoute, 72),
+            (ContractError::ChecklistNotFound, 73),
+            (ContractError::CriterionNotFound, 74),
+            (ContractError::ChecklistAlreadySubmitted, 75),
+            (ContractError::RequiredCriteriaNotMet, 76),
+            (ContractError::MaxCriteriaExceeded, 77),
+            (ContractError::RubricNotFound, 78),
+            (ContractError::InvalidWeights, 79),
+            (ContractError::ModuleTripped, 80),
+            (ContractError::BreakerNotTripped, 81),
+            (ContractError::InvoiceNotFound, 82),
+            (ContractError::InvoiceAlreadySubmitted, 83),
+            (ContractError::CrowdfundNotFound, 84),
+            (ContractError::CrowdfundNotActive, 85),
+            (ContractError::CrowdfundDeadlineNotReached, 86),
+            (ContractError::CrowdfundAlreadyFinalized, 87),
+            (ContractError::AlreadyPledged, 88),
+            (ContractError::CommentTooLong, 89),
+            (ContractError::ReviewNotFound, 90),
+            (ContractError::DagAlreadyAttached, 91),
+            (ContractError::DagCycleDetected, 92),
+            (ContractError::DependencyNotSatisfied, 93),
+            (ContractError::DagNotAttached, 94),
+            (ContractError::NftNotFound, 95),
+            (ContractError::NftNotTransferable, 96),
+            (ContractError::NotNftOwner, 97),
+            (ContractError::ReferralCodeNotFound, 98),
+            (ContractError::ReferralCodeInactive, 99),
+            (ContractError::ReferralCodeExpired, 100),
+            (ContractError::ReferralCodeExhausted, 101),
+            (ContractError::AlreadyReferred, 102),
+            (ContractError::ReferralRecordNotFound, 103),
+            (ContractError::NoRewardsToClaim, 104),
+            (ContractError::ExtensionRequestNotFound, 105),
+            (ContractError::ExtensionAlreadyResolved, 106),
+            (ContractError::NoDeadlineSet, 107),
+            (ContractError::ArbiterNotFound, 108),
+            (ContractError::ArbiterAlreadyJoined, 109),
+            (ContractError::ArbiterInActiveCase, 110),
+            (ContractError::ArbitrationCaseNotFound, 111),
+            (ContractError::CaseAlreadyFinalized, 112),
+            (ContractError::CaseNotFinalized, 113),
+            (ContractError::NotPanelMember, 114),
+            (ContractError::VotingDeadlinePassed, 115),
+            (ContractError::InsufficientArbiters, 116),
+            (ContractError::BondNotFound, 117),
+            (ContractError::BondAlreadyPosted, 118),
+            (ContractError::BondNotPosted, 119),
+            (ContractError::BondNotActive, 120),
+            (ContractError::BondExpired, 121),
+            (ContractError::CollateralAlreadyDeposited, 122),
+            (ContractError::CollateralNotDeposited, 123),
+            (ContractError::AddressNotWhitelisted, 124),
+            (ContractError::BatchSizeExceeded, 125),
+            (ContractError::MaxConditionsExceeded, 126),
+            (ContractError::ConditionCheckFailed, 127),
+            (ContractError::AutoApproveNotEnabled, 128),
+            (ContractError::AutoApproveGracePeriodNotPassed, 129),
+            (ContractError::AutoApproveInsufficientVotes, 130),
+            (ContractError::KycRequired, 131),
+            (ContractError::TimerAlreadyFired, 132),
+            (ContractError::TimerNotEligible, 133),
+            (ContractError::WaitlistFull, 134),
+            (ContractError::AlreadyOnWaitlist, 135),
+            (ContractError::NotOnWaitlist, 136),
+            (ContractError::TimerNotFound, 137),
+            (ContractError::ContributorNotFound, 138),
+            (ContractError::LockupAlreadyExists, 139),
+            (ContractError::LockupNotFound, 140),
+            (ContractError::LockupAlreadyReleased, 141),
+            (ContractError::NotYetUnlocked, 142),
+            (ContractError::LockupRevocationUnauthorized, 143),
+            (ContractError::LockupAlreadyRevoked, 144),
+            (ContractError::DaoVoteRequired, 145),
+        ];
+        for (_, disc) in pairs {
+            let idx = *disc as usize;
+            assert!(
+                idx <= MAX_DISCRIMINANT,
+                "Discriminant {} exceeds MAX_DISCRIMINANT",
+                disc
+            );
+            assert!(
+                !seen[idx],
+                "Duplicate discriminant {} found in ContractError",
+                disc
+            );
+            seen[idx] = true;
+        }
+        let mut count = 0;
+        for &v in &seen {
+            if v {
+                count += 1;
+            }
+        }
+        assert_eq!(
+            count,
+            pairs.len(),
+            "Number of unique discriminants must equal number of variants"
+        );
+    }
+}
