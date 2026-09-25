@@ -575,7 +575,8 @@ impl StellarGrantsContract {
                 // Deduct protocol fee (split across reviewer reward pool,
                 // revenue-share pool, and treasury) before passing the net
                 // amount to the grant recipient or split recipients.
-                let net_amount = fees::deduct_and_split_fee(env, &grant.token, ms.amount, Some(&grant.owner))?;
+                let net_amount =
+                    fees::deduct_and_split_fee(env, &grant.token, ms.amount, Some(&grant.owner))?;
                 if split_payment::has_split(env, grant_id, idx) {
                     split_payment::execute_split(env, grant_id, idx, net_amount)?;
                 } else {
@@ -2041,12 +2042,7 @@ impl StellarGrantsContract {
     }
 
     /// List state snapshots captured for a grant, paginated.
-    pub fn list_snapshots(
-        env: Env,
-        grant_id: u64,
-        offset: u32,
-        limit: u32,
-    ) -> Vec<StateSnapshot> {
+    pub fn list_snapshots(env: Env, grant_id: u64, offset: u32, limit: u32) -> Vec<StateSnapshot> {
         snapshot::list_snapshots(&env, grant_id, offset, limit)
     }
 
@@ -3305,7 +3301,7 @@ impl StellarGrantsContract {
         env: Env,
         contributors: Vec<Address>,
         rubric_id: u32,
-    ) -> Vec<ScoreResult> {
+    ) -> Result<Vec<ScoreResult>, ContractError> {
         scoring::rank_contributors(&env, contributors, rubric_id)
     }
 

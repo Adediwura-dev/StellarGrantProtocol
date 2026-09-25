@@ -1,4 +1,4 @@
-use soroban_sdk::{Address, Env};
+use soroban_sdk::{Address, Env, Map, Vec};
 
 use crate::errors::ContractError;
 use crate::governance;
@@ -172,9 +172,9 @@ pub fn get_record(env: &Env, grant_id: u64, milestone_idx: u32) -> Option<AutoAp
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{AutoApproveConfig, Grant, Milestone, MilestoneState, GrantStatus};
     use crate::storage::Storage;
-    use soroban_sdk::testutils::Address as _;
+    use crate::types::{AutoApproveConfig, Grant, GrantStatus, Milestone, MilestoneState};
+    use soroban_sdk::testutils::{Address as _, Ledger as _};
 
     fn setup() -> (Env, Address, u64) {
         let env = Env::default();
@@ -190,27 +190,34 @@ mod tests {
                 title: soroban_sdk::String::from_str(&env, "Test Grant"),
                 description: soroban_sdk::String::from_str(&env, "Desc"),
                 total_amount: 1_000_000,
-                disbursed_amount: 0,
                 status: GrantStatus::Active,
                 total_milestones: 2,
-                created_at: env.ledger().timestamp(),
-                updated_at: env.ledger().timestamp(),
+                milestone_amount: 500_000,
+                reviewers: Vec::new(&env),
+                milestones_paid_out: 0,
+                escrow_balance: 0,
+                funders: Vec::new(&env),
+                reason: None,
+                timestamp: env.ledger().timestamp(),
+                require_compliance: None,
                 token: Address::generate(&env),
-                ..Default::default()
             };
-            Storage::set_grant(&env, &grant);
+            Storage::set_grant(&env, grant_id, &grant);
 
             let milestone = Milestone {
-                grant_id,
-                index: 0,
+                idx: 0,
                 description: soroban_sdk::String::from_str(&env, "M1"),
                 amount: 500_000,
                 state: MilestoneState::Submitted,
+                votes: Map::new(&env),
                 approvals: 0,
                 rejections: 0,
+                reasons: Map::new(&env),
+                status_updated_at: env.ledger().timestamp(),
+                proof_url: None,
                 submission_timestamp: 1000,
                 deadline: None,
-                ..Default::default()
+                reviewer_count_snapshot: 0,
             };
             Storage::set_milestone(&env, grant_id, 0, &milestone);
         });
@@ -224,9 +231,12 @@ mod tests {
         let contract_id = env.register(crate::StellarGrantsContract, ());
 
         let config = AutoApproveConfig {
+            grant_id,
             enabled: true,
             grace_period_seconds: 3600,
             min_votes_required: 3,
+            set_by: owner.clone(),
+            set_at: env.ledger().timestamp(),
         };
 
         env.as_contract(&contract_id, || {
@@ -246,9 +256,12 @@ mod tests {
         let contract_id = env.register(crate::StellarGrantsContract, ());
 
         let config = AutoApproveConfig {
+            grant_id,
             enabled: true,
             grace_period_seconds: 0,
             min_votes_required: 0,
+            set_by: owner.clone(),
+            set_at: env.ledger().timestamp(),
         };
 
         env.as_contract(&contract_id, || {
@@ -277,9 +290,12 @@ mod tests {
 
         env.as_contract(&contract_id, || {
             let config = AutoApproveConfig {
+                grant_id,
                 enabled: true,
                 grace_period_seconds: 3600,
                 min_votes_required: 1,
+                set_by: owner.clone(),
+                set_at: env.ledger().timestamp(),
             };
             set_config(&env, &owner, grant_id, config).unwrap();
 
@@ -302,9 +318,12 @@ mod tests {
 
         env.as_contract(&contract_id, || {
             let config = AutoApproveConfig {
+                grant_id,
                 enabled: true,
                 grace_period_seconds: 0,
                 min_votes_required: 5,
+                set_by: owner.clone(),
+                set_at: env.ledger().timestamp(),
             };
             set_config(&env, &owner, grant_id, config).unwrap();
 
@@ -332,9 +351,12 @@ mod tests {
 
         env.as_contract(&contract_id, || {
             let config = AutoApproveConfig {
+                grant_id,
                 enabled: true,
                 grace_period_seconds: 0,
                 min_votes_required: 2,
+                set_by: owner.clone(),
+                set_at: env.ledger().timestamp(),
             };
             set_config(&env, &owner, grant_id, config).unwrap();
 
@@ -363,9 +385,12 @@ mod tests {
 
         env.as_contract(&contract_id, || {
             let config = AutoApproveConfig {
+                grant_id,
                 enabled: true,
                 grace_period_seconds: 0,
                 min_votes_required: 1,
+                set_by: owner.clone(),
+                set_at: env.ledger().timestamp(),
             };
             set_config(&env, &owner, grant_id, config).unwrap();
 
@@ -393,9 +418,12 @@ mod tests {
             assert!(!can_auto_approve(&env, grant_id, 0));
 
             let config = AutoApproveConfig {
+                grant_id,
                 enabled: true,
                 grace_period_seconds: 0,
                 min_votes_required: 1,
+                set_by: owner.clone(),
+                set_at: env.ledger().timestamp(),
             };
             set_config(&env, &owner, grant_id, config).unwrap();
 

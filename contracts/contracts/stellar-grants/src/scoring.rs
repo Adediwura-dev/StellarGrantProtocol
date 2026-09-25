@@ -408,7 +408,9 @@ mod tests {
         contributors.push_back(c2.clone());
         contributors.push_back(c1.clone());
 
-        let ranked = env.as_contract(&contract_id, || rank_contributors(&env, contributors, id).unwrap());
+        let ranked = env.as_contract(&contract_id, || {
+            rank_contributors(&env, contributors, id).unwrap()
+        });
         assert_eq!(ranked.len(), 2);
         assert!(ranked.get(0).unwrap().total_score >= ranked.get(1).unwrap().total_score);
     }
