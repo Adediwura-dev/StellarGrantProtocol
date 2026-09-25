@@ -1,10 +1,9 @@
-- closes #1040
-- closes #1041
-- closes #1042
-- closes #1047
+- closes #1036
+- closes #1037
+- closes #1038
+- closes #1039
 
 ### Changes Made:
-- **`reviewer_reward`**: Wired up the `accrue_reward` dead code logic to correctly distribute reward pool funds.
-- **`migration`**: Added a strict monotonicity check in `run_migration` to reject older or identical target versions, preventing desync.
-- **`milestone_template`**: Replaced the unbounded scan in `public_templates()` with a paginated index map to mitigate cheap private-template spam.
-- **`open_review`**: Enforced the missing registration requirement check inside `submit_review` as promised by the doc-comments.
+- **`matching.rs`**: Replaced the raw addition inside `isqrt()` with `checked_add` to entirely eliminate `i128::MAX` overflow panics. Also capped the contributor list evaluation to securely guard against permanent DoS locking of the matching pool.
+- **`grant_transfer.rs`**: Strengthened `accept_transfer` by strictly gating it behind an `Active` grant state assertion.
+- **`invoice.rs`**: Upgraded `validate_line_items` to exclusively compute totals utilizing `checked_mul` instead of raw multiplication operators.
