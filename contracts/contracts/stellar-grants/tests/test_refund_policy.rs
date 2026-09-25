@@ -309,3 +309,128 @@ fn test_no_refund_policy_with_min_refund_floor_still_pays_funder_the_floor() {
     assert_eq!(funder_refund + owner_compensation, 1000);
     assert_eq!(client.get_grant(&grant_id).escrow_balance, 0);
 }
+
+#[test]
+fn test_refund_set_policy_rejects_nonzero_escrow_balance() {
+    let (_env, client, _token_client, grant_id, owner, _funder) =
+        setup_funded_grant_with_policy(RefundPolicyType::FullRefund, 0, 0);
+
+    let new_policy = RefundPolicy {
+        grant_id,
+        policy_type: RefundPolicyType::NoRefund,
+        penalty_bps: 0,
+        grace_period_ledgers: 0,
+        min_refund_pct_bps: 0,
+    };
+
+    let result = client.try_refund_set_policy(&owner, &grant_id, &new_policy);
+    assert_eq!(result, Err(Ok(stellar_grants::ContractError::InvalidInput)));
+}
+
+#[test]
+fn test_refund_set_policy_nonexistent_grant_returns_grant_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    let contract_id = env.register_contract(None, stellar_grants::StellarGrantsContract);
+    let client = StellarGrantsContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let nonexistent_grant_id = 99999u64;
+    let policy = RefundPolicy {
+        grant_id: nonexistent_grant_id,
+        policy_type: RefundPolicyType::FullRefund,
+        penalty_bps: 0,
+        grace_period_ledgers: 0,
+        min_refund_pct_bps: 0,
+    };
+
+    let result = client.try_refund_set_policy(&owner, &nonexistent_grant_id, &policy);
+    assert_eq!(
+        result,
+        Err(Ok(stellar_grants::ContractError::GrantNotFound))
+    );
+}
+
+#[test]
+fn test_refund_set_policy_invalid_input_mismatched_policy_or_owner() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    let wrong_owner = Address::generate(&env);
+    let reviewer = Address::generate(&env);
+    let token_admin_addr = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin_addr)
+        .address();
+
+    let contract_id = env.register_contract(None, stellar_grants::StellarGrantsContract);
+    let client = StellarGrantsContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let mut reviewers: Vec<Address> = Vec::new(&env);
+    reviewers.push_back(reviewer);
+
+    let grant_id = client.grant_create(
+        &owner,
+        &String::from_str(&env, "Test Grant"),
+        &String::from_str(&env, "Desc"),
+        &token,
+        &1000,
+        &1000,
+        &1,
+        &reviewers,
+    );
+
+    // 1. Mismatched grant_id in policy
+    let mismatched_policy = RefundPolicy {
+        grant_id: grant_id + 1,
+        policy_type: RefundPolicyType::FullRefund,
+        penalty_bps: 0,
+        grace_period_ledgers: 0,
+        min_refund_pct_bps: 0,
+    };
+    let res1 = client.try_refund_set_policy(&owner, &grant_id, &mismatched_policy);
+    assert_eq!(res1, Err(Ok(stellar_grants::ContractError::InvalidInput)));
+
+    // 2. Caller is not the grant owner
+    let policy = RefundPolicy {
+        grant_id,
+        policy_type: RefundPolicyType::FullRefund,
+        penalty_bps: 0,
+        grace_period_ledgers: 0,
+        min_refund_pct_bps: 0,
+    };
+    let res2 = client.try_refund_set_policy(&wrong_owner, &grant_id, &policy);
+    assert_eq!(res2, Err(Ok(stellar_grants::ContractError::InvalidInput)));
+}
+
+#[test]
+fn test_refund_calculate_and_execute_nonexistent_grant_returns_grant_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let caller = Address::generate(&env);
+    let contract_id = env.register_contract(None, stellar_grants::StellarGrantsContract);
+    let client = StellarGrantsContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let nonexistent_grant_id = 88888u64;
+
+    let res_calc = client.try_refund_calculate(&nonexistent_grant_id, &caller);
+    assert_eq!(
+        res_calc,
+        Err(Ok(stellar_grants::ContractError::GrantNotFound))
+    );
+
+    let res_exec = client.try_refund_execute(&nonexistent_grant_id, &caller);
+    assert_eq!(
+        res_exec,
+        Err(Ok(stellar_grants::ContractError::GrantNotFound))
+    );
+}
