@@ -2,7 +2,9 @@ use soroban_sdk::{contracttype, Address, Env, Symbol, Vec};
 
 use crate::rate_limit;
 use crate::storage::Storage;
-use crate::types::{ContractError, MilestoneState, RateLimitAction, SnapshotTrigger, StateSnapshot};
+use crate::types::{
+    ContractError, MilestoneState, RateLimitAction, SnapshotTrigger, StateSnapshot,
+};
 
 #[contracttype]
 pub enum SnapshotKey {
