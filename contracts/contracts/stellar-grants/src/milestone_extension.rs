@@ -124,7 +124,16 @@ pub fn vote_extension(
     }
 
     let grant = Storage::get_grant(env, grant_id).ok_or(ContractError::GrantNotFound)?;
-    if !grant.reviewers.contains(reviewer.clone()) {
+    // Check eligibility against the reviewer list snapshot taken at submission time (#1145).
+    // This prevents reviewers added mid-vote from voting on the extension request.
+    let milestone = Storage::get_milestone(env, grant_id, milestone_idx)
+        .ok_or(ContractError::MilestoneNotFound)?;
+    let eligible_reviewers = if milestone.reviewer_list_snapshot.is_empty() {
+        &grant.reviewers
+    } else {
+        &milestone.reviewer_list_snapshot
+    };
+    if !eligible_reviewers.contains(reviewer.clone()) {
         return Err(ContractError::Unauthorized);
     }
     if request.reviewer_votes.contains_key(reviewer.clone()) {
@@ -139,8 +148,6 @@ pub fn vote_extension(
     }
 
     // Issue #952: Use the same reviewer_count_snapshot that milestone approval uses
-    let milestone = Storage::get_milestone(env, grant_id, milestone_idx)
-        .ok_or(ContractError::MilestoneNotFound)?;
     let total_reviewers = milestone.reviewer_count_snapshot as usize;
     let majority = (total_reviewers / 2 + 1) as u32;
 
@@ -293,6 +300,7 @@ mod tests {
             submission_timestamp: env.ledger().timestamp(),
             deadline: Some(deadline),
             reviewer_count_snapshot: reviewers.len() as u32,
+            reviewer_list_snapshot: reviewers.clone(),
         };
         Storage::set_milestone(env, grant_id, 0, &milestone);
     }

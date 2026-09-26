@@ -172,8 +172,8 @@ pub fn get_record(env: &Env, grant_id: u64, milestone_idx: u32) -> Option<AutoAp
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{AutoApproveConfig, Grant, Milestone, MilestoneState, GrantStatus};
     use crate::storage::Storage;
+    use crate::types::{AutoApproveConfig, Grant, GrantStatus, Milestone, MilestoneState};
     use soroban_sdk::testutils::Address as _;
 
     fn setup() -> (Env, Address, u64) {

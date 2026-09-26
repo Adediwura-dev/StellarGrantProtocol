@@ -575,7 +575,8 @@ impl StellarGrantsContract {
                 // Deduct protocol fee (split across reviewer reward pool,
                 // revenue-share pool, and treasury) before passing the net
                 // amount to the grant recipient or split recipients.
-                let net_amount = fees::deduct_and_split_fee(env, &grant.token, ms.amount, Some(&grant.owner))?;
+                let net_amount =
+                    fees::deduct_and_split_fee(env, &grant.token, ms.amount, Some(&grant.owner))?;
                 if split_payment::has_split(env, grant_id, idx) {
                     split_payment::execute_split(env, grant_id, idx, net_amount)?;
                 } else {
@@ -2041,12 +2042,7 @@ impl StellarGrantsContract {
     }
 
     /// List state snapshots captured for a grant, paginated.
-    pub fn list_snapshots(
-        env: Env,
-        grant_id: u64,
-        offset: u32,
-        limit: u32,
-    ) -> Vec<StateSnapshot> {
+    pub fn list_snapshots(env: Env, grant_id: u64, offset: u32, limit: u32) -> Vec<StateSnapshot> {
         snapshot::list_snapshots(&env, grant_id, offset, limit)
     }
 
@@ -4984,6 +4980,7 @@ fn apply_milestone_submission(
         submission_timestamp: env.ledger().timestamp(),
         deadline: None,
         reviewer_count_snapshot: grant.reviewers.len(),
+        reviewer_list_snapshot: grant.reviewers.clone(),
     };
 
     Storage::set_milestone(env, grant_id, milestone_idx, &milestone);
