@@ -129,6 +129,7 @@ pub enum ArbitrationKey {
     PoolToken,
     Arbiter(Address),
     ActiveCases(Address),
+    PendingSettlements(Address),
     Case(u32),
     CaseByDispute(u32),
     CaseCounter,

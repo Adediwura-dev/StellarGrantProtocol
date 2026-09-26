@@ -651,6 +651,14 @@ mod tests {
             let grant_id = seed_grant(&env, 1, &owner, 10_000, 4);
             set_reviewers(&env, grant_id, vec![&env, reviewer.clone()]);
 
+            let initial_grant = Storage::get_grant(&env, grant_id).unwrap();
+            assert_eq!(initial_grant.owner, owner);
+            assert_eq!(initial_grant.status, GrantStatus::Active);
+            assert!(
+                initial_grant.milestone_amount * initial_grant.total_milestones as i128
+                    <= initial_grant.total_amount
+            );
+
             let version = propose_amendment(
                 &env,
                 &owner,
@@ -668,6 +676,9 @@ mod tests {
                 String::from_str(&env, "more checkpoints, bigger budget"),
             )
             .expect("amendment should be proposed");
+            let amendment = Storage::get_amendment(&env, grant_id, version).unwrap();
+            assert_eq!(amendment.proposed_by, owner);
+            assert_eq!(amendment.status, AmendmentStatus::Proposed);
             vote_amendment(&env, &reviewer, grant_id, version, true)
                 .expect("amendment should be approved");
 
