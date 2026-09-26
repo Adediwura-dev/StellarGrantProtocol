@@ -134,7 +134,9 @@ pub fn leave_pool(env: &Env, arbiter: &Address) -> Result<i128, ContractError> {
         return Err(ContractError::ArbiterNotFound);
     }
 
-    if Storage::get_arbiter_active_cases(env, arbiter) > 0 {
+    if Storage::get_arbiter_active_cases(env, arbiter) > 0
+        || Storage::get_arbiter_pending_settlements(env, arbiter) > 0
+    {
         return Err(ContractError::ArbiterInActiveCase);
     }
 
@@ -313,6 +315,8 @@ pub fn finalize_case(env: &Env, case_id: u32) -> Result<bool, ContractError> {
     for addr in case.panel.iter() {
         let count = Storage::get_arbiter_active_cases(env, &addr);
         Storage::set_arbiter_active_cases(env, &addr, count.saturating_sub(1));
+        let pending = Storage::get_arbiter_pending_settlements(env, &addr);
+        Storage::set_arbiter_pending_settlements(env, &addr, pending.saturating_add(1));
     }
 
     CaseFinalized { case_id, outcome }.publish(env);
@@ -367,11 +371,12 @@ pub fn settle_rewards(env: &Env, case_id: u32) -> Result<(), ContractError> {
 
             if let Some(idx) = panelist_idx {
                 if let Some(snapshotted_stake) = case.panel_stakes.get(idx) {
-                    let slash = snapshotted_stake
+                    let requested_slash = snapshotted_stake
                         .checked_mul(ARBITER_SLASH_BPS as i128)
                         .ok_or(ContractError::InvalidInput)?
                         .checked_div(BASIS_POINTS_SCALE as i128)
                         .ok_or(ContractError::InvalidInput)?;
+                    let slash = requested_slash.min(arb.stake);
                     if slash > 0 {
                         arb.stake = arb
                             .stake
@@ -421,6 +426,13 @@ pub fn settle_rewards(env: &Env, case_id: u32) -> Result<(), ContractError> {
                 }
             }
         }
+    }
+
+    // Release the post-finalization withdrawal lock only after all rewards have
+    // been applied successfully.
+    for addr in case.panel.iter() {
+        let pending = Storage::get_arbiter_pending_settlements(env, &addr);
+        Storage::set_arbiter_pending_settlements(env, &addr, pending.saturating_sub(1));
     }
 
     Storage::set_arbitration_settled(env, case_id);
@@ -926,6 +938,35 @@ mod tests {
                 let arb = get_arbiter(&env, &panel.get(i).unwrap()).unwrap();
                 assert_eq!(arb.stake, 10_000);
             }
+        });
+    }
+
+    #[test]
+    fn test_finalized_panelist_cannot_leave_until_settlement() {
+        let (env, cid, _token, _arbs, case_id) = setup_case_with_panel();
+        env.mock_all_auths_allowing_non_root_auth();
+        let panel = get_panel(&env, &cid, case_id);
+        for i in 0..3 {
+            env.as_contract(&cid, || {
+                cast_arbiter_vote(&env, &panel.get(i).unwrap(), case_id, i != 2, 80).unwrap();
+            });
+        }
+        env.as_contract(&cid, || {
+            finalize_case(&env, case_id).unwrap();
+        });
+        let minority = panel.get(2).unwrap();
+        env.as_contract(&cid, || {
+            assert_eq!(
+                leave_pool(&env, &minority),
+                Err(ContractError::ArbiterInActiveCase)
+            );
+        });
+        env.as_contract(&cid, || {
+            settle_rewards(&env, case_id).unwrap();
+            assert_eq!(Storage::get_arbiter_pending_settlements(&env, &minority), 0);
+            assert_eq!(get_arbiter(&env, &minority).unwrap().stake, 9_000);
+            let majority = get_arbiter(&env, &panel.get(0).unwrap()).unwrap();
+            assert_eq!(majority.stake, 10_500);
         });
     }
 

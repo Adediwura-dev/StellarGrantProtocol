@@ -453,6 +453,64 @@ mod tests {
         }
     }
 
+    // Regression test for issue #888: the `env.storage().persistent().get(...)`
+    // call inside `compute_grant_qf_score` had no way to infer its value
+    // type from `contribution.amount` alone, which failed to compile with
+    // E0282. Seeds contributions directly (perfect-square amounts so the
+    // sqrt-sum-squared result is exact) and asserts the full
+    // (qf_score, total_direct, unique_contributors) tuple.
+    #[test]
+    fn test_compute_grant_qf_score_matches_hand_computed_example() {
+        let env = Env::default();
+        let round_id: u32 = 1;
+        let grant_id: u64 = 1;
+        let contributor_a = Address::generate(&env);
+        let contributor_b = Address::generate(&env);
+
+        let mut contributors = Vec::new(&env);
+        contributors.push_back(contributor_a.clone());
+        contributors.push_back(contributor_b.clone());
+        env.storage().persistent().set(
+            &DataKey::Matching(MatchingKey::GrantContributors(round_id, grant_id)),
+            &contributors,
+        );
+
+        env.storage().persistent().set(
+            &DataKey::Matching(MatchingKey::Contribution(
+                round_id,
+                contributor_a.clone(),
+                grant_id,
+            )),
+            &MatchingContribution {
+                contributor: contributor_a.clone(),
+                grant_id,
+                amount: 100,
+                contributed_at: 0,
+            },
+        );
+        env.storage().persistent().set(
+            &DataKey::Matching(MatchingKey::Contribution(
+                round_id,
+                contributor_b.clone(),
+                grant_id,
+            )),
+            &MatchingContribution {
+                contributor: contributor_b.clone(),
+                grant_id,
+                amount: 400,
+                contributed_at: 0,
+            },
+        );
+
+        let (qf_score, total_direct, unique_contributors) =
+            compute_grant_qf_score(&env, round_id, grant_id);
+
+        // sqrt(100) + sqrt(400) = 10 + 20 = 30; qf_score = 30^2 = 900.
+        assert_eq!(qf_score, 900);
+        assert_eq!(total_direct, 500);
+        assert_eq!(unique_contributors, 2);
+    }
+
     #[test]
     fn test_isqrt_non_perfect_squares() {
         assert_eq!(isqrt(2), 1);

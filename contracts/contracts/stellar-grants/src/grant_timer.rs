@@ -1,5 +1,6 @@
 use soroban_sdk::{Address, Env, String, Symbol, Vec};
 
+use crate::constants;
 use crate::errors::ContractError;
 use crate::storage::Storage;
 use crate::types::{GrantStatus, TimerRecord, TimerTriggerType};
@@ -25,6 +26,10 @@ pub fn register_timer(
     }
 
     let mut timers = Storage::get_grant_timers(env, grant_id);
+
+    if timers.len() >= constants::MAX_TIMERS_PER_GRANT {
+        return Err(ContractError::InvalidInput);
+    }
 
     for existing in timers.iter() {
         if existing.trigger_type == trigger_type && !existing.fired {
@@ -594,6 +599,106 @@ mod tests {
                 pending.get(0).unwrap().trigger_type,
                 TimerTriggerType::CustomCallback
             );
+        });
+    }
+
+    #[test]
+    fn test_max_timers_per_grant_enforced() {
+        with_setup(|env, _admin, owner| {
+            // Fill up to MAX_TIMERS_PER_GRANT by repeatedly registering + firing
+            // CustomCallback (fires unconditionally at or past fires_at timestamp).
+            for i in 0..crate::constants::MAX_TIMERS_PER_GRANT {
+                register_timer(env, owner, 1, TimerTriggerType::CustomCallback, 1_000)
+                    .unwrap_or_else(|e| panic!("registration {i} failed: {e:?}"));
+                trigger_timers(env, owner, 1);
+            }
+            assert_eq!(
+                get_timers(env, 1).len(),
+                crate::constants::MAX_TIMERS_PER_GRANT
+            );
+            // The next registration must be rejected.
+            let result = register_timer(env, owner, 1, TimerTriggerType::CustomCallback, 1_000);
+            assert_eq!(result, Err(ContractError::InvalidInput));
+            // The list must not have grown.
+            assert_eq!(
+                get_timers(env, 1).len(),
+                crate::constants::MAX_TIMERS_PER_GRANT
+            );
+        });
+    }
+
+    #[test]
+    fn test_timer_list_bounded_across_fire_cycles() {
+        with_setup(|env, _admin, owner| {
+            // Simulate many fire/re-register cycles; the list must never exceed the cap.
+            for _ in 0..20 {
+                let _ = register_timer(env, owner, 1, TimerTriggerType::CustomCallback, 1_000);
+                trigger_timers(env, owner, 1);
+                assert!(get_timers(env, 1).len() <= crate::constants::MAX_TIMERS_PER_GRANT);
+            }
+        });
+    }
+
+    // Regression test for issue #887: `cancel_grant_internal` called
+    // `collateral::forfeit` with the wrong argument count/order (missing the
+    // `caller` parameter added when auth was introduced there), which failed
+    // to compile with E0061. Exercises the exact timer-triggered
+    // `cancel_grant_internal` -> `collateral::forfeit` call site and confirms
+    // collateral is actually forfeited for the correct amount.
+    #[test]
+    fn auto_cancel_forfeits_collateral_via_timer() {
+        use crate::types::{CollateralDeposit, CollateralRequirement, CollateralStatus};
+        use soroban_sdk::token::StellarAssetClient;
+
+        with_setup(|env, _admin, owner| {
+            let token_admin = Address::generate(env);
+            let token_contract = env
+                .register_stellar_asset_contract_v2(token_admin.clone())
+                .address();
+
+            Storage::set_treasury(env, &Address::generate(env));
+            Storage::set_collateral_requirement(
+                env,
+                1,
+                &CollateralRequirement {
+                    grant_id: 1,
+                    token: token_contract.clone(),
+                    amount: 1_000,
+                    forfeit_on_abandon_bps: 2_500,
+                    forfeit_on_dispute_loss_bps: 5_000,
+                },
+            );
+            Storage::set_collateral_deposit(
+                env,
+                1,
+                owner,
+                &CollateralDeposit {
+                    grant_id: 1,
+                    contributor: owner.clone(),
+                    token: token_contract.clone(),
+                    amount: 1_000,
+                    status: CollateralStatus::Deposited,
+                    deposited_at: 0,
+                    forfeited_amount: 0,
+                },
+            );
+
+            // `forfeit` transfers the forfeited amount out of the contract's
+            // own balance, so the contract needs collateral tokens on hand.
+            StellarAssetClient::new(env, &token_contract)
+                .mint(&env.current_contract_address(), &1_000);
+
+            // escrow_balance is 0 (see make_grant) -> AutoCancel is eligible.
+            register_timer(env, owner, 1, TimerTriggerType::AutoCancel, 1_000).unwrap();
+            assert_eq!(trigger_timers(env, owner, 1), 1);
+
+            let deposit = Storage::get_collateral_deposit(env, 1, owner).unwrap();
+            // 25% (forfeit_on_abandon_bps = 2_500) of 1_000 = 250.
+            assert_eq!(deposit.forfeited_amount, 250);
+            assert_eq!(deposit.status, CollateralStatus::PartiallyForfeited);
+
+            let grant = Storage::get_grant(env, 1).unwrap();
+            assert_eq!(grant.status, GrantStatus::Cancelled);
         });
     }
 }

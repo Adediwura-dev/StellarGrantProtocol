@@ -4,7 +4,9 @@ use crate::access_control::{has_role, require_role};
 use crate::constants::CLAWBACK_DISPUTE_WINDOW_SECONDS;
 use crate::events::Events;
 use crate::storage::Storage;
-use crate::types::{ClawbackRequest, ClawbackStatus, ContractError, MilestoneState, Role};
+use crate::types::{
+    ClawbackRequest, ClawbackStatus, ContractError, Dispute, DisputeStatus, MilestoneState, Role,
+};
 
 /// Initiate a clawback. Requires DisputeArbiter role.
 pub fn initiate(
@@ -100,11 +102,25 @@ pub fn approve(
         return Err(ContractError::Unauthorized);
     }
 
+    let has_admin_approval = is_protocol_admin
+        || clawback
+            .approvals
+            .iter()
+            .any(|a| has_role(env, &a, Role::ProtocolAdmin));
+    let has_arbiter_approval = is_dispute_arbiter
+        || clawback
+            .approvals
+            .iter()
+            .any(|a| has_role(env, &a, Role::DisputeArbiter));
+
     // Add approval
     clawback.approvals.push_back(approver.clone());
 
     // Check if we have enough approvals
-    if clawback.approvals.len() >= clawback.required_approvals {
+    if clawback.approvals.len() >= clawback.required_approvals
+        && has_admin_approval
+        && has_arbiter_approval
+    {
         clawback.status = ClawbackStatus::Approved;
     }
 
@@ -143,16 +159,34 @@ pub fn dispute(
         return Err(ContractError::DeadlinePassed);
     }
 
+    if Storage::get_dispute(env, grant_id, milestone_idx).is_some() {
+        return Err(ContractError::InvalidState);
+    }
+
     // Update status to disputed
     clawback.status = ClawbackStatus::DisputedByContributor;
     Storage::set_clawback(env, grant_id, milestone_idx, &clawback);
 
     Events::emit_clawback_disputed(env, grant_id, milestone_idx, contributor.clone());
 
-    // Raise a formal dispute for arbitration
+    // Record this post-completion dispute directly. `raise_dispute` is for
+    // active grants and also locks their escrow, which is not valid here.
     let grant = Storage::get_grant(env, grant_id).ok_or(ContractError::GrantNotFound)?;
     let dispute_reason = String::from_str(env, "Clawback disputed by contributor");
-    crate::dispute::raise_dispute(env, &grant, milestone_idx, contributor, dispute_reason)?;
+    let record = Dispute {
+        grant_id,
+        milestone_idx,
+        raised_by: contributor.clone(),
+        reason: dispute_reason,
+        status: DisputeStatus::Open,
+        arbiters: Vec::new(env),
+        votes_contributor: 0,
+        votes_funder: 0,
+        raised_at: now,
+        resolved_at: None,
+    };
+    Storage::set_dispute(env, grant_id, milestone_idx, &record);
+    Events::emit_dispute_raised(env, grant_id, milestone_idx, contributor.clone());
 
     Ok(())
 }
@@ -254,16 +288,19 @@ pub fn execute(
     if allowance < clawback.amount {
         return Err(ContractError::InsufficientClawbackAllowance);
     }
-    token_client.transfer_from(
-        &env.current_contract_address(),
-        &clawback.target,
-        &treasury,
-        &clawback.amount,
-    );
 
-    // Update status
     clawback.status = ClawbackStatus::Executed;
     Storage::set_clawback(env, grant_id, milestone_idx, &clawback);
+
+    crate::reentrancy::protect_external_call(env, || {
+        token_client.transfer_from(
+            &env.current_contract_address(),
+            &clawback.target,
+            &treasury,
+            &clawback.amount,
+        );
+        Ok(())
+    })?;
 
     Events::emit_clawback_executed(
         env,
@@ -407,6 +444,7 @@ mod tests {
             submission_timestamp: env.ledger().timestamp(),
             deadline: None,
             reviewer_count_snapshot: 0,
+            reviewer_list_snapshot: soroban_sdk::Vec::new(env),
         }
     }
 
@@ -553,6 +591,52 @@ mod tests {
     }
 
     #[test]
+    fn test_approve_requires_both_roles() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let contract_id = register(&env);
+        let admin = Address::generate(&env);
+        let protocol_admin = Address::generate(&env);
+        let arbiter = Address::generate(&env);
+        let second_arbiter = Address::generate(&env);
+        let owner = Address::generate(&env);
+        let token = Address::generate(&env);
+        seed(
+            &env,
+            &contract_id,
+            &owner,
+            &token,
+            &admin,
+            &protocol_admin,
+            &arbiter,
+            false,
+        );
+        env.as_contract(&contract_id, || {
+            grant_role(&env, &admin, &second_arbiter, Role::DisputeArbiter, None).unwrap();
+        });
+        env.as_contract(&contract_id, || {
+            initiate(&env, &arbiter, 1, 0, String::from_str(&env, "Test")).unwrap();
+        });
+        env.as_contract(&contract_id, || {
+            approve(&env, &arbiter, 1, 0).unwrap();
+        });
+        env.as_contract(&contract_id, || {
+            approve(&env, &second_arbiter, 1, 0).unwrap();
+            assert_eq!(
+                get_request(&env, 1, 0).unwrap().status,
+                ClawbackStatus::Pending
+            );
+        });
+        env.as_contract(&contract_id, || {
+            approve(&env, &protocol_admin, 1, 0).unwrap();
+            assert_eq!(
+                get_request(&env, 1, 0).unwrap().status,
+                ClawbackStatus::Approved
+            );
+        });
+    }
+
+    #[test]
     fn test_dispute_clawback_success() {
         let env = Env::default();
         env.mock_all_auths_allowing_non_root_auth();
@@ -588,11 +672,16 @@ mod tests {
 
         // Contributor disputes
         env.as_contract(&contract_id, || {
+            let mut grant = Storage::get_grant(&env, 1).unwrap();
+            grant.status = crate::types::GrantStatus::Completed;
+            Storage::set_grant(&env, 1, &grant);
             let result = dispute(&env, &owner, 1, 0);
             assert!(result.is_ok());
 
             let clawback = get_request(&env, 1, 0).unwrap();
             assert_eq!(clawback.status, ClawbackStatus::DisputedByContributor);
+            let dispute_record = Storage::get_dispute(&env, 1, 0).unwrap();
+            assert_eq!(dispute_record.status, DisputeStatus::Open);
         });
     }
 

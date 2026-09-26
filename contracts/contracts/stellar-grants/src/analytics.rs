@@ -312,6 +312,7 @@ mod tests {
             submission_timestamp: 150,
             deadline: None,
             reviewer_count_snapshot: 0,
+            reviewer_list_snapshot: soroban_sdk::Vec::new(&env),
         };
         Storage::set_milestone(&env, 1, 0, &milestone0);
 
@@ -329,6 +330,7 @@ mod tests {
             submission_timestamp: 300,
             deadline: None,
             reviewer_count_snapshot: 0,
+            reviewer_list_snapshot: soroban_sdk::Vec::new(&env),
         };
         Storage::set_milestone(&env, 1, 1, &milestone1);
 

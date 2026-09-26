@@ -259,6 +259,7 @@ mod tests {
                     start.saturating_add(crate::constants::SECONDS_PER_WEEK * (i as u64 + 1)),
                 ),
                 reviewer_count_snapshot: 0,
+                reviewer_list_snapshot: soroban_sdk::Vec::new(&env),
             };
             Storage::set_milestone(&env, grant_id, i, &ms);
         }

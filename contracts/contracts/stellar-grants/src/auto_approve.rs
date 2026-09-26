@@ -1,4 +1,4 @@
-use soroban_sdk::{Address, Env};
+use soroban_sdk::{Address, Env, Map, Vec};
 
 use crate::errors::ContractError;
 use crate::governance;
@@ -179,7 +179,7 @@ mod tests {
     use super::*;
     use crate::storage::Storage;
     use crate::types::{AutoApproveConfig, Grant, GrantStatus, Milestone, MilestoneState};
-    use soroban_sdk::testutils::{Address as _, Ledger};
+    use soroban_sdk::testutils::{Address as _, Ledger as _};
 
     fn setup() -> (Env, Address, u64) {
         let env = Env::default();
@@ -194,18 +194,21 @@ mod tests {
                 owner: owner.clone(),
                 title: soroban_sdk::String::from_str(&env, "Test Grant"),
                 description: soroban_sdk::String::from_str(&env, "Desc"),
-                token: Address::generate(&env),
+                total_amount: 1_000_000,
                 status: GrantStatus::Active,
                 total_amount: 1_000_000,
                 milestone_amount: 500_000,
                 reviewers: soroban_sdk::Vec::new(&env),
                 total_milestones: 2,
+                milestone_amount: 500_000,
+                reviewers: Vec::new(&env),
                 milestones_paid_out: 0,
                 escrow_balance: 0,
-                funders: soroban_sdk::Vec::new(&env),
+                funders: Vec::new(&env),
                 reason: None,
                 timestamp: env.ledger().timestamp(),
                 require_compliance: None,
+                token: Address::generate(&env),
             };
             Storage::set_grant(&env, grant_id, &grant);
 
@@ -214,15 +217,15 @@ mod tests {
                 description: soroban_sdk::String::from_str(&env, "M1"),
                 amount: 500_000,
                 state: MilestoneState::Submitted,
-                votes: soroban_sdk::Map::new(&env),
+                votes: Map::new(&env),
                 approvals: 0,
                 rejections: 0,
-                reasons: soroban_sdk::Map::new(&env),
-                status_updated_at: 0,
+                reasons: Map::new(&env),
+                status_updated_at: env.ledger().timestamp(),
                 proof_url: None,
                 submission_timestamp: 1000,
                 deadline: None,
-                reviewer_count_snapshot: 2,
+                reviewer_count_snapshot: 0,
             };
             Storage::set_milestone(&env, grant_id, 0, &milestone);
         });
@@ -241,7 +244,7 @@ mod tests {
             grace_period_seconds: 3600,
             min_votes_required: 3,
             set_by: owner.clone(),
-            set_at: 0,
+            set_at: env.ledger().timestamp(),
         };
 
         env.as_contract(&contract_id, || {
@@ -266,7 +269,7 @@ mod tests {
             grace_period_seconds: 0,
             min_votes_required: 0,
             set_by: owner.clone(),
-            set_at: 0,
+            set_at: env.ledger().timestamp(),
         };
 
         env.as_contract(&contract_id, || {
@@ -300,7 +303,7 @@ mod tests {
                 grace_period_seconds: 3600,
                 min_votes_required: 1,
                 set_by: owner.clone(),
-                set_at: 0,
+                set_at: env.ledger().timestamp(),
             };
             set_config(&env, &owner, grant_id, config).unwrap();
 
@@ -328,7 +331,7 @@ mod tests {
                 grace_period_seconds: 0,
                 min_votes_required: 5,
                 set_by: owner.clone(),
-                set_at: 0,
+                set_at: env.ledger().timestamp(),
             };
             set_config(&env, &owner, grant_id, config).unwrap();
 
@@ -361,7 +364,7 @@ mod tests {
                 grace_period_seconds: 0,
                 min_votes_required: 2,
                 set_by: owner.clone(),
-                set_at: 0,
+                set_at: env.ledger().timestamp(),
             };
             set_config(&env, &owner, grant_id, config).unwrap();
 
@@ -395,7 +398,7 @@ mod tests {
                 grace_period_seconds: 0,
                 min_votes_required: 1,
                 set_by: owner.clone(),
-                set_at: 0,
+                set_at: env.ledger().timestamp(),
             };
             set_config(&env, &owner, grant_id, config).unwrap();
 
@@ -428,7 +431,7 @@ mod tests {
                 grace_period_seconds: 0,
                 min_votes_required: 1,
                 set_by: owner.clone(),
-                set_at: 0,
+                set_at: env.ledger().timestamp(),
             };
             set_config(&env, &owner, grant_id, config).unwrap();
 

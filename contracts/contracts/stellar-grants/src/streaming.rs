@@ -1,5 +1,6 @@
 use soroban_sdk::{contractevent, token, Address, Env};
 
+use crate::constants;
 use crate::errors::ContractError;
 use crate::storage::Storage;
 use crate::types::{GrantStatus, PaymentStream, StreamStatus};
@@ -66,7 +67,7 @@ pub fn create_stream(
     if rate_per_ledger <= 0 {
         return Err(ContractError::InvalidInput);
     }
-    if duration_ledgers == 0 {
+    if duration_ledgers == 0 || duration_ledgers > constants::MAX_STREAM_DURATION_LEDGERS {
         return Err(ContractError::InvalidInput);
     }
 
@@ -463,6 +464,38 @@ mod tests {
         // Grant 999 was never created.
         let result = client.try_create_stream(&sender, &recipient, &999, &token, &100, &100);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_stream_rejects_duration_above_max() {
+        let (env, sender, recipient, token, _, cid) = setup();
+        let client = crate::StellarGrantsContractClient::new(&env, &cid);
+        let result = client.try_create_stream(
+            &sender,
+            &recipient,
+            &1,
+            &token,
+            &1,
+            &(crate::constants::MAX_STREAM_DURATION_LEDGERS + 1),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_stream_accepts_max_duration() {
+        let (env, sender, recipient, token, _, cid) = setup();
+        let client = crate::StellarGrantsContractClient::new(&env, &cid);
+        // rate=1 * duration=MAX_STREAM_DURATION_LEDGERS = 1_000_000 stroops deposited;
+        // setup() mints 10_000_000 so this is within balance.
+        let result = client.try_create_stream(
+            &sender,
+            &recipient,
+            &1,
+            &token,
+            &1,
+            &crate::constants::MAX_STREAM_DURATION_LEDGERS,
+        );
+        assert!(result.is_ok());
     }
 
     #[test]

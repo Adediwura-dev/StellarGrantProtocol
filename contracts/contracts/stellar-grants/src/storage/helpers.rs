@@ -2043,6 +2043,21 @@ impl Storage {
         Self::bump(env, &key);
     }
 
+    pub fn get_arbiter_pending_settlements(env: &Env, arbiter: &Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Arbitration(ArbitrationKey::PendingSettlements(
+                arbiter.clone(),
+            )))
+            .unwrap_or(0)
+    }
+
+    pub fn set_arbiter_pending_settlements(env: &Env, arbiter: &Address, count: u32) {
+        let key = DataKey::Arbitration(ArbitrationKey::PendingSettlements(arbiter.clone()));
+        env.storage().persistent().set(&key, &count);
+        Self::bump(env, &key);
+    }
+
     pub fn next_arbitration_case_id(env: &Env) -> u32 {
         let mut id: u32 = env
             .storage()
@@ -2790,6 +2805,46 @@ mod tests {
         let contract_id = env.register(crate::StellarGrantsContract, ());
         env.as_contract(&contract_id, || {
             assert!(Storage::get_payment_split(&env, 999, 0).is_none());
+        });
+    }
+
+    // Regression test for issue #885: `TransferableRole` was missing from
+    // this file's `use crate::types::{...}` import block, which failed
+    // `get_transfer_proposal`/`set_transfer_proposal`/`remove_transfer_proposal`
+    // to compile with E0425. Covers the full set/get/remove round trip so a
+    // future edit to this file's imports can't silently drop the type again.
+    #[test]
+    fn test_transfer_proposal_round_trip() {
+        let env = Env::default();
+        let contract_id = env.register(crate::StellarGrantsContract, ());
+        env.as_contract(&contract_id, || {
+            let grant_id: u64 = 1;
+            let current_holder = Address::generate(&env);
+            let proposed_new_holder = Address::generate(&env);
+            let proposal = TransferProposal {
+                grant_id,
+                current_holder: current_holder.clone(),
+                proposed_new_holder: proposed_new_holder.clone(),
+                role: TransferableRole::Owner,
+                reviewer_to_replace: None,
+                proposed_at: 1_000,
+            };
+
+            assert!(
+                Storage::get_transfer_proposal(&env, grant_id, &TransferableRole::Owner).is_none()
+            );
+
+            Storage::set_transfer_proposal(&env, grant_id, &TransferableRole::Owner, &proposal);
+            let got =
+                Storage::get_transfer_proposal(&env, grant_id, &TransferableRole::Owner).unwrap();
+            assert_eq!(got.current_holder, current_holder);
+            assert_eq!(got.proposed_new_holder, proposed_new_holder);
+            assert_eq!(got.role, TransferableRole::Owner);
+
+            Storage::remove_transfer_proposal(&env, grant_id, &TransferableRole::Owner);
+            assert!(
+                Storage::get_transfer_proposal(&env, grant_id, &TransferableRole::Owner).is_none()
+            );
         });
     }
 }
