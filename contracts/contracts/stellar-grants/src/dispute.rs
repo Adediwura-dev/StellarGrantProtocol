@@ -350,6 +350,7 @@ mod tests {
             submission_timestamp: 0,
             deadline: None,
             reviewer_count_snapshot: 0,
+            reviewer_list_snapshot: soroban_sdk::Vec::new(env),
         }
     }
 

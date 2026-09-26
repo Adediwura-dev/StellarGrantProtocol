@@ -75,6 +75,7 @@ pub fn fork_grant(
                     submission_timestamp: 0,
                     deadline: None,
                     reviewer_count_snapshot: 0,
+                    reviewer_list_snapshot: soroban_sdk::Vec::new(env),
                 };
                 Storage::set_milestone(env, new_grant_id, idx, &new_milestone);
                 copied_any = true;
@@ -199,6 +200,7 @@ mod test {
             submission_timestamp: env.ledger().timestamp(),
             deadline: None,
             reviewer_count_snapshot: 1,
+            reviewer_list_snapshot: soroban_sdk::Vec::new(env),
         };
         Storage::set_milestone(env, grant_id, idx, &milestone);
     }

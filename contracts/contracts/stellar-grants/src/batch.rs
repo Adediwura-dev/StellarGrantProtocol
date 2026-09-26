@@ -356,6 +356,7 @@ mod tests {
                 submission_timestamp: env.ledger().timestamp(),
                 deadline: None,
                 reviewer_count_snapshot: 0,
+                reviewer_list_snapshot: soroban_sdk::Vec::new(env),
             };
             Storage::set_milestone(env, id, idx, &milestone);
         }

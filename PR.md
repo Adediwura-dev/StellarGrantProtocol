@@ -1,5 +1,6 @@
 # test: expand refund / dispute / delegate / fuzz coverage (#976, #977, #978, #979)
 
+
 This PR is **test-only** — it touches five files, all under
 `contracts/contracts/stellar-grants/tests/`, and changes **no production code**.
 It bundles four independent test-coverage issues that all concern the same

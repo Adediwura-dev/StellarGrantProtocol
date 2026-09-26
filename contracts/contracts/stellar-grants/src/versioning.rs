@@ -324,6 +324,7 @@ pub fn apply_amendment(
                     submission_timestamp: 0,
                     deadline: None,
                     reviewer_count_snapshot: grant.reviewers.len(),
+                    reviewer_list_snapshot: grant.reviewers.clone(),
                 };
                 Storage::set_milestone(env, grant_id, idx, &milestone);
             }
@@ -669,7 +670,7 @@ mod tests {
                 ],
                 vec![
                     &env,
-                    String::from_str(&env, "15000"),
+                    String::from_str(&env, "20000"),
                     String::from_str(&env, "6"),
                 ],
                 String::from_str(&env, "more checkpoints, bigger budget"),
