@@ -317,4 +317,96 @@ mod tests {
         let result = export_milestones_since(&env, 0, u32::MAX - 5, 10);
         assert!(!result.has_more);
     }
+
+    fn make_grant(env: &Env, owner: &Address) -> crate::types::Grant {
+        crate::types::Grant {
+            id: 1,
+            owner: owner.clone(),
+            title: soroban_sdk::String::from_str(env, "Test Grant"),
+            description: soroban_sdk::String::from_str(env, "Desc"),
+            token: Address::generate(env),
+            status: crate::types::GrantStatus::Active,
+            total_amount: 1_000,
+            milestone_amount: 1_000,
+            reviewers: soroban_sdk::Vec::new(env),
+            total_milestones: 1,
+            milestones_paid_out: 0,
+            escrow_balance: 0,
+            funders: soroban_sdk::Vec::new(env),
+            reason: None,
+            timestamp: 0,
+            require_compliance: None,
+        }
+    }
+
+    // Regression test for issue #886: `export_grants` compared a `usize`
+    // loop index against `all_ids.len()` (`u32`) without casting, which
+    // failed to compile with E0308. Confirms the fixed scan loop still
+    // bounds itself to `MAX_GRANTS_PER_SCAN` even when `GlobalOrder` holds
+    // more ids than that (issue #855's cost-bounding behavior).
+    #[test]
+    fn test_export_grants_stops_at_max_grants_per_scan() {
+        let (env, _admin) = setup();
+        let overflow_count = MAX_GRANTS_PER_SCAN + 5;
+        let mut ids = soroban_sdk::Vec::new(&env);
+        for i in 1..=overflow_count as u64 {
+            ids.push_back(i);
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::Grant(GrantKey::GlobalOrder), &ids);
+
+        let result = export_grants(&env, 0, 10, None);
+        // Only the first MAX_GRANTS_PER_SCAN ids are ever scanned, regardless
+        // of how many more are queued in GlobalOrder.
+        assert_eq!(result.total, MAX_GRANTS_PER_SCAN);
+        assert!(result.has_more);
+    }
+
+    // Regression test for issue #886, `export_milestones_since` half.
+    // A real grant/milestone placed right at the scan boundary
+    // (id == MAX_GRANTS_PER_SCAN) must be counted; one placed just past it
+    // must not be, proving the scan actually stops at the limit rather than
+    // merely not panicking.
+    #[test]
+    fn test_export_milestones_since_stops_at_max_grants_per_scan() {
+        let (env, owner) = setup();
+        let overflow_count = MAX_GRANTS_PER_SCAN + 5;
+        let mut ids = soroban_sdk::Vec::new(&env);
+        for i in 1..=overflow_count as u64 {
+            ids.push_back(i);
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::Grant(GrantKey::GlobalOrder), &ids);
+
+        let included_id = MAX_GRANTS_PER_SCAN as u64;
+        let excluded_id = included_id + 1;
+        for gid in [included_id, excluded_id] {
+            Storage::set_grant(&env, gid, &make_grant(&env, &owner));
+            Storage::set_milestone(
+                &env,
+                gid,
+                0,
+                &crate::types::Milestone {
+                    idx: 0,
+                    description: soroban_sdk::String::from_str(&env, "m"),
+                    amount: 100,
+                    state: crate::types::MilestoneState::Submitted,
+                    votes: soroban_sdk::Map::new(&env),
+                    approvals: 0,
+                    rejections: 0,
+                    reasons: soroban_sdk::Map::new(&env),
+                    status_updated_at: 1,
+                    proof_url: None,
+                    submission_timestamp: 1,
+                    deadline: None,
+                    reviewer_count_snapshot: 0,
+                },
+            );
+        }
+
+        let result = export_milestones_since(&env, 0, 0, 50);
+        assert_eq!(result.total, 1);
+    }
 }

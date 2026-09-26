@@ -638,4 +638,67 @@ mod tests {
             }
         });
     }
+
+    // Regression test for issue #887: `cancel_grant_internal` called
+    // `collateral::forfeit` with the wrong argument count/order (missing the
+    // `caller` parameter added when auth was introduced there), which failed
+    // to compile with E0061. Exercises the exact timer-triggered
+    // `cancel_grant_internal` -> `collateral::forfeit` call site and confirms
+    // collateral is actually forfeited for the correct amount.
+    #[test]
+    fn auto_cancel_forfeits_collateral_via_timer() {
+        use crate::types::{CollateralDeposit, CollateralRequirement, CollateralStatus};
+        use soroban_sdk::token::StellarAssetClient;
+
+        with_setup(|env, _admin, owner| {
+            let token_admin = Address::generate(env);
+            let token_contract = env
+                .register_stellar_asset_contract_v2(token_admin.clone())
+                .address();
+
+            Storage::set_treasury(env, &Address::generate(env));
+            Storage::set_collateral_requirement(
+                env,
+                1,
+                &CollateralRequirement {
+                    grant_id: 1,
+                    token: token_contract.clone(),
+                    amount: 1_000,
+                    forfeit_on_abandon_bps: 2_500,
+                    forfeit_on_dispute_loss_bps: 5_000,
+                },
+            );
+            Storage::set_collateral_deposit(
+                env,
+                1,
+                owner,
+                &CollateralDeposit {
+                    grant_id: 1,
+                    contributor: owner.clone(),
+                    token: token_contract.clone(),
+                    amount: 1_000,
+                    status: CollateralStatus::Deposited,
+                    deposited_at: 0,
+                    forfeited_amount: 0,
+                },
+            );
+
+            // `forfeit` transfers the forfeited amount out of the contract's
+            // own balance, so the contract needs collateral tokens on hand.
+            StellarAssetClient::new(env, &token_contract)
+                .mint(&env.current_contract_address(), &1_000);
+
+            // escrow_balance is 0 (see make_grant) -> AutoCancel is eligible.
+            register_timer(env, owner, 1, TimerTriggerType::AutoCancel, 1_000).unwrap();
+            assert_eq!(trigger_timers(env, owner, 1), 1);
+
+            let deposit = Storage::get_collateral_deposit(env, 1, owner).unwrap();
+            // 25% (forfeit_on_abandon_bps = 2_500) of 1_000 = 250.
+            assert_eq!(deposit.forfeited_amount, 250);
+            assert_eq!(deposit.status, CollateralStatus::PartiallyForfeited);
+
+            let grant = Storage::get_grant(env, 1).unwrap();
+            assert_eq!(grant.status, GrantStatus::Cancelled);
+        });
+    }
 }
