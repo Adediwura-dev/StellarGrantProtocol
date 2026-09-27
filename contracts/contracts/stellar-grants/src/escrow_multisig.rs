@@ -116,9 +116,12 @@ pub fn get_request(env: &Env, grant_id: u64, milestone_idx: u32) -> Option<Escro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::Storage;
+    use crate::types::EscrowAccount;
     use soroban_sdk::testutils::{Address as _, Ledger};
+    use soroban_sdk::token;
 
-    fn setup() -> (Env, u64) {
+    fn setup() -> (Env, u64, Address) {
         let env = Env::default();
         env.mock_all_auths();
         let contract_id = env.register(crate::StellarGrantsContract, ());
@@ -130,13 +133,15 @@ mod tests {
             env.storage().persistent().set(&DataKey::Config, &config);
         });
 
-        (env, grant_id)
+        // The threshold above is written to this instance's storage, so tests
+        // have to run against the same `contract_id` instead of registering a
+        // second instance, whose storage would look unconfigured.
+        (env, grant_id, contract_id)
     }
 
     #[test]
     fn test_create_request() {
-        let (env, grant_id) = setup();
-        let contract_id = env.register(crate::StellarGrantsContract, ());
+        let (env, grant_id, contract_id) = setup();
         let recipient = Address::generate(&env);
 
         env.as_contract(&contract_id, || {
@@ -153,8 +158,7 @@ mod tests {
 
     #[test]
     fn test_approve_accumulates() {
-        let (env, grant_id) = setup();
-        let contract_id = env.register(crate::StellarGrantsContract, ());
+        let (env, grant_id, contract_id) = setup();
         let approver1 = Address::generate(&env);
         let approver2 = Address::generate(&env);
         let recipient = Address::generate(&env);
@@ -176,15 +180,19 @@ mod tests {
 
     #[test]
     fn test_duplicate_approval_rejected() {
-        let (env, grant_id) = setup();
-        let contract_id = env.register(crate::StellarGrantsContract, ());
+        let (env, grant_id, contract_id) = setup();
         let approver = Address::generate(&env);
         let recipient = Address::generate(&env);
 
         env.as_contract(&contract_id, || {
             create_request(&env, grant_id, 0, 1000, recipient).unwrap();
-
             approve(&env, approver.clone(), grant_id, 0).unwrap();
+        });
+
+        // The duplicate lands in its own contract invocation: authorising the
+        // same approver twice inside one frame is rejected by the host as a
+        // re-authorized frame before `approve` gets to its duplicate check.
+        env.as_contract(&contract_id, || {
             let result = approve(&env, approver, grant_id, 0);
             assert_eq!(result, Err(ContractError::AlreadyVoted));
         });
@@ -192,8 +200,7 @@ mod tests {
 
     #[test]
     fn test_execute_before_threshold_rejected() {
-        let (env, grant_id) = setup();
-        let contract_id = env.register(crate::StellarGrantsContract, ());
+        let (env, grant_id, contract_id) = setup();
         let approver = Address::generate(&env);
         let recipient = Address::generate(&env);
 
@@ -209,13 +216,34 @@ mod tests {
 
     #[test]
     fn test_execute_already_executed_rejected() {
-        let (env, grant_id) = setup();
-        let contract_id = env.register(crate::StellarGrantsContract, ());
+        let (env, grant_id, contract_id) = setup();
         let approver1 = Address::generate(&env);
         let approver2 = Address::generate(&env);
         let recipient = Address::generate(&env);
 
+        // The first `execute_release` has to succeed for the second one to be
+        // rejected as already executed, so the grant needs a funded escrow
+        // account and a token contract the contract can actually pay out of.
+        let token_admin = Address::generate(&env);
+        let token_id = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        token::StellarAssetClient::new(&env, &token_id).mint(&contract_id, &1000);
+
         env.as_contract(&contract_id, || {
+            Storage::set_escrow_account(
+                &env,
+                grant_id,
+                &EscrowAccount {
+                    owner: Address::generate(&env),
+                    token: token_id.clone(),
+                    balance: 1000,
+                    total_deposited: 1000,
+                    total_released: 0,
+                    locked: false,
+                },
+            );
+
             create_request(&env, grant_id, 0, 1000, recipient).unwrap();
             approve(&env, approver1, grant_id, 0).unwrap();
             approve(&env, approver2, grant_id, 0).unwrap();
@@ -230,8 +258,7 @@ mod tests {
 
     #[test]
     fn test_approve_after_expiry_rejected() {
-        let (env, grant_id) = setup();
-        let contract_id = env.register(crate::StellarGrantsContract, ());
+        let (env, grant_id, contract_id) = setup();
         let approver = Address::generate(&env);
         let recipient = Address::generate(&env);
 

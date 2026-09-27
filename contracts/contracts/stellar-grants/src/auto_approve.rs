@@ -181,9 +181,15 @@ mod tests {
     use crate::types::{AutoApproveConfig, Grant, GrantStatus, Milestone, MilestoneState};
     use soroban_sdk::testutils::{Address as _, Ledger as _};
 
-    fn setup() -> (Env, Address, u64) {
+    fn setup() -> (Env, Address, u64, Address) {
         let env = Env::default();
         env.mock_all_auths();
+        // The seeded milestone counts as submitted at timestamp 1000, and the
+        // test ledger starts at 0, which would make every case read as
+        // "grace period not passed" before it reached what it means to test.
+        let mut ledger = env.ledger().get();
+        ledger.timestamp = 2000;
+        env.ledger().set(ledger);
         let owner = Address::generate(&env);
         let contract_id = env.register(crate::StellarGrantsContract, ());
         let grant_id = 1u64;
@@ -194,21 +200,18 @@ mod tests {
                 owner: owner.clone(),
                 title: soroban_sdk::String::from_str(&env, "Test Grant"),
                 description: soroban_sdk::String::from_str(&env, "Desc"),
-                total_amount: 1_000_000,
+                token: Address::generate(&env),
                 status: GrantStatus::Active,
                 total_amount: 1_000_000,
                 milestone_amount: 500_000,
-                reviewers: soroban_sdk::Vec::new(&env),
-                total_milestones: 2,
-                milestone_amount: 500_000,
                 reviewers: Vec::new(&env),
+                total_milestones: 2,
                 milestones_paid_out: 0,
                 escrow_balance: 0,
                 funders: Vec::new(&env),
                 reason: None,
                 timestamp: env.ledger().timestamp(),
                 require_compliance: None,
-                token: Address::generate(&env),
             };
             Storage::set_grant(&env, grant_id, &grant);
 
@@ -226,17 +229,21 @@ mod tests {
                 submission_timestamp: 1000,
                 deadline: None,
                 reviewer_count_snapshot: 0,
+                reviewer_list_snapshot: Vec::new(&env),
             };
             Storage::set_milestone(&env, grant_id, 0, &milestone);
         });
 
-        (env, owner, grant_id)
+        // The contract instance is returned rather than re-registered by each
+        // test: storage is per-instance, so a second `env.register` would look
+        // at a fresh instance and find neither the grant nor the milestone
+        // seeded above.
+        (env, owner, grant_id, contract_id)
     }
 
     #[test]
     fn test_set_and_get_config() {
-        let (env, owner, grant_id) = setup();
-        let contract_id = env.register(crate::StellarGrantsContract, ());
+        let (env, owner, grant_id, contract_id) = setup();
 
         let config = AutoApproveConfig {
             grant_id,
@@ -260,8 +267,7 @@ mod tests {
 
     #[test]
     fn test_set_config_rejects_zero_params() {
-        let (env, owner, grant_id) = setup();
-        let contract_id = env.register(crate::StellarGrantsContract, ());
+        let (env, owner, grant_id, contract_id) = setup();
 
         let config = AutoApproveConfig {
             grant_id,
@@ -280,8 +286,7 @@ mod tests {
 
     #[test]
     fn test_try_auto_approve_not_enabled() {
-        let (env, _owner, grant_id) = setup();
-        let contract_id = env.register(crate::StellarGrantsContract, ());
+        let (env, _owner, grant_id, contract_id) = setup();
         let caller = Address::generate(&env);
 
         env.as_contract(&contract_id, || {
@@ -292,8 +297,7 @@ mod tests {
 
     #[test]
     fn test_try_auto_approve_grace_period_not_passed() {
-        let (env, owner, grant_id) = setup();
-        let contract_id = env.register(crate::StellarGrantsContract, ());
+        let (env, owner, grant_id, contract_id) = setup();
         let caller = Address::generate(&env);
 
         env.as_contract(&contract_id, || {
@@ -320,8 +324,7 @@ mod tests {
 
     #[test]
     fn test_try_auto_approve_insufficient_votes() {
-        let (env, owner, grant_id) = setup();
-        let contract_id = env.register(crate::StellarGrantsContract, ());
+        let (env, owner, grant_id, contract_id) = setup();
         let caller = Address::generate(&env);
 
         env.as_contract(&contract_id, || {
@@ -353,8 +356,7 @@ mod tests {
 
     #[test]
     fn test_try_auto_approve_success() {
-        let (env, owner, grant_id) = setup();
-        let contract_id = env.register(crate::StellarGrantsContract, ());
+        let (env, owner, grant_id, contract_id) = setup();
         let caller = Address::generate(&env);
 
         env.as_contract(&contract_id, || {
@@ -387,8 +389,7 @@ mod tests {
 
     #[test]
     fn test_try_auto_approve_rejects_already_triggered() {
-        let (env, owner, grant_id) = setup();
-        let contract_id = env.register(crate::StellarGrantsContract, ());
+        let (env, owner, grant_id, contract_id) = setup();
         let caller = Address::generate(&env);
 
         env.as_contract(&contract_id, || {
@@ -419,8 +420,7 @@ mod tests {
 
     #[test]
     fn test_can_auto_approve() {
-        let (env, owner, grant_id) = setup();
-        let contract_id = env.register(crate::StellarGrantsContract, ());
+        let (env, owner, grant_id, contract_id) = setup();
 
         env.as_contract(&contract_id, || {
             assert!(!can_auto_approve(&env, grant_id, 0));
